@@ -9,14 +9,24 @@ import {
 } from "react";
 import { api } from "./api";
 
+export type Role = "ADMIN" | "GESTIONNAIRE" | "FORMATEUR" | "APPRENANT";
+
 export type SessionUser = {
   id: string;
   email: string;
   name: string;
-  role: "STAFF" | "CONTACT";
-  clientId: string | null;
-  client: { id: string; name: string } | null;
+  role: Role;
 };
+
+/** Membres de l'équipe : accès au back-office (tout sauf APPRENANT). */
+export function isEquipe(role: string | undefined): boolean {
+  return role === "ADMIN" || role === "GESTIONNAIRE" || role === "FORMATEUR";
+}
+
+/** ADMIN et GESTIONNAIRE : pilotent le catalogue, les apprenants, l'équipe. */
+export function isGestion(role: string | undefined): boolean {
+  return role === "ADMIN" || role === "GESTIONNAIRE";
+}
 
 type AuthContextValue = {
   user: SessionUser | null;
@@ -86,5 +96,5 @@ export function useAuth() {
 }
 
 export function homeForRole(role: string | undefined) {
-  return role === "STAFF" ? "/backoffice" : "/mes-formations";
+  return isEquipe(role) ? "/backoffice" : "/mes-formations";
 }

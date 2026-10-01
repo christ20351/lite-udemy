@@ -3,7 +3,7 @@ import path from 'node:path';
 import express, { Router } from 'express';
 import multer from 'multer';
 import { prisma } from '../lib/prisma.js';
-import { requireAuth, requireStaff } from '../lib/auth.js';
+import { requireAuth, requireEquipe, isEquipe } from '../lib/auth.js';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'videos');
 const IMAGE_DIR = path.join(process.cwd(), 'uploads', 'images');
@@ -79,11 +79,11 @@ const uploadImage = multer({
 
 export const uploadsRouter = Router();
 
-// Upload d'une vidéo (staff uniquement)
+// Upload d'une vidéo (équipe)
 uploadsRouter.post(
   '/video',
   requireAuth,
-  requireStaff,
+  requireEquipe,
   upload.single('video'),
   (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
@@ -92,11 +92,11 @@ uploadsRouter.post(
   }
 );
 
-// Upload d'une image de leçon (staff uniquement)
+// Upload d'une image de leçon (équipe)
 uploadsRouter.post(
   '/image',
   requireAuth,
-  requireStaff,
+  requireEquipe,
   uploadImage.single('image'),
   (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
@@ -106,7 +106,7 @@ uploadsRouter.post(
 
 // Service des images (public : les images de cours ne sont pas sensibles)
 uploadsRouter.use('/images/:filename', (req, res) => {
-  const filename = path.basename(String(req.params.filename));
+  const filename = path.basename(String((req.params.filename as string)));
   const filePath = path.join(IMAGE_DIR, filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Image introuvable' });
   const mime = ALLOWED_IMAGES[path.extname(filename).toLowerCase()] || 'application/octet-stream';
@@ -124,12 +124,12 @@ uploadsRouter.use(
 
 // Streaming avec support HTTP Range + protection par accès
 export async function streamVideo(req: import('express').Request, res: import('express').Response) {
-  const filename = path.basename(String(req.params.filename));
+  const filename = path.basename(String((req.params.filename as string)));
   const filePath = path.join(UPLOAD_DIR, filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Vidéo introuvable' });
 
   // ── Autorisation : staff OK ; sinon leçon must be preview ou accès actif
-  if (req.user?.role !== 'STAFF') {
+  if (!isEquipe(req.user?.role ?? '')) {
     const lesson = await prisma.lesson.findFirst({ where: { videoPath: { contains: filename } } });
     if (!lesson) return res.status(404).json({ error: 'Vidéo introuvable' });
     if (req.user) {
@@ -137,7 +137,7 @@ export async function streamVideo(req: import('express').Request, res: import('e
       if (!section) return res.status(404).json({ error: 'Vidéo introuvable' });
       const hasAccess =
         lesson.isPreview ||
-        (await prisma.access.findUnique({
+        (await prisma.enrollment.findUnique({
           where: { userId_formationId: { userId: req.user.id, formationId: section.formationId } },
         }));
       if (!hasAccess) return res.status(403).json({ error: 'Accès non autorisé à cette formation' });

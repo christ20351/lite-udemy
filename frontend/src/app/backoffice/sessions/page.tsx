@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { Check, Circle, CircleAlert, CircleCheck, Globe, School } from "lucide-react";
 
 type Participant = {
   id: string;
@@ -23,9 +24,9 @@ type SessionItem = {
   participants: Participant[];
 };
 type Formation = { id: string; title: string };
-type AccessItem = {
+type EnrolledItem = {
   id: string;
-  user: { id: string; name: string; email: string; client: { name: string } | null };
+  user: { id: string; name: string; email: string };
 };
 
 function fmt(d: string) {
@@ -41,7 +42,7 @@ function fmt(d: string) {
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [formations, setFormations] = useState<Formation[]>([]);
-  const [accessMap, setAccessMap] = useState<Record<string, AccessItem[]>>({});
+  const [enrolledMap, setEnrolledMap] = useState<Record<string, EnrolledItem[]>>({});
   const [form, setForm] = useState({
     formationId: "",
     title: "",
@@ -65,10 +66,10 @@ export default function SessionsPage() {
     load().catch((e) => setError(e.message));
   }, [load]);
 
-  async function loadAccess(formationId: string) {
-    if (!formationId || accessMap[formationId]) return;
-    const data = await api(`/formations/${formationId}/accesses`);
-    setAccessMap((m) => ({ ...m, [formationId]: data.accesses }));
+  async function loadEnrolled(formationId: string) {
+    if (!formationId || enrolledMap[formationId]) return;
+    const data = await api(`/formations/${formationId}/enrollments`);
+    setEnrolledMap((m) => ({ ...m, [formationId]: data.enrollments }));
   }
 
   function flash(msg: string) {
@@ -96,13 +97,15 @@ export default function SessionsPage() {
       </p>
 
       {notice && (
-        <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-sm px-3 py-2">
-          {notice}
+        <div className="notice-box mt-4">
+          <CircleCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+          <span>{notice}</span>
         </div>
       )}
       {error && (
-        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-sm px-3 py-2">
-          {error}
+        <div className="notice-box mt-4">
+          <CircleAlert className="h-4 w-4 shrink-0" aria-hidden />
+          <span>{error}</span>
         </div>
       )}
 
@@ -192,8 +195,8 @@ export default function SessionsPage() {
             onChange={(e) => setForm({ ...form, modality: e.target.value as "PRESENTIEL" | "ONLINE" })}
             className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm"
           >
-            <option value="PRESENTIEL">🏫 Présentiel</option>
-            <option value="ONLINE">🌐 En ligne</option>
+            <option value="PRESENTIEL">Présentiel</option>
+            <option value="ONLINE">En ligne</option>
           </select>
         </div>
         <div className="md:col-span-2">
@@ -244,7 +247,7 @@ export default function SessionsPage() {
                 </span>
                 <button
                   onClick={() => run(() => api(`/sessions/${s.id}`, { method: "DELETE" }), "Session supprimée")}
-                  className="text-xs text-red-500 dark:text-red-400 hover:underline"
+                  className="text-xs text-muted hover:text-fg hover:underline"
                 >
                   Supprimer
                 </button>
@@ -257,7 +260,7 @@ export default function SessionsPage() {
                   key={p.id}
                   className={`inline-flex items-center gap-1.5 rounded-full text-xs px-2.5 py-1 ${
                     p.attended
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                      ? "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400"
                       : "bg-surface-2 text-fg-soft"
                   }`}
                 >
@@ -274,9 +277,9 @@ export default function SessionsPage() {
                         "Présence mise à jour"
                       )
                     }
-                    className="font-bold opacity-60 hover:opacity-100"
+                    className="flex items-center opacity-60 hover:opacity-100"
                   >
-                    {p.attended ? "✓" : "○"}
+                    {p.attended ? <Check className="h-3.5 w-3.5" aria-hidden /> : <Circle className="h-3 w-3" aria-hidden />}
                   </button>
                   <button
                     title="Désinscrire"
@@ -286,7 +289,7 @@ export default function SessionsPage() {
                         "Participant retiré"
                       )
                     }
-                    className="font-bold opacity-60 hover:text-red-600"
+                    className="font-bold opacity-60 hover:opacity-100"
                   >
                     ×
                   </button>
@@ -299,8 +302,8 @@ export default function SessionsPage() {
 
             <ParticipantPicker
               session={s}
-              accessMap={accessMap}
-              onLoadAccess={loadAccess}
+              enrolledMap={enrolledMap}
+              onLoadEnrolled={loadEnrolled}
               onInscribe={(userId) =>
                 run(
                   () =>
@@ -324,24 +327,24 @@ export default function SessionsPage() {
 
 function ParticipantPicker({
   session,
-  accessMap,
-  onLoadAccess,
+  enrolledMap,
+  onLoadEnrolled,
   onInscribe,
 }: {
   session: SessionItem;
-  accessMap: Record<string, AccessItem[]>;
-  onLoadAccess: (formationId: string) => void;
+  enrolledMap: Record<string, EnrolledItem[]>;
+  onLoadEnrolled: (formationId: string) => void;
   onInscribe: (userId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [choice, setChoice] = useState("");
 
   useEffect(() => {
-    if (open) onLoadAccess(session.formation.id);
-  }, [open, session.formation.id, onLoadAccess]);
+    if (open) onLoadEnrolled(session.formation.id);
+  }, [open, session.formation.id, onLoadEnrolled]);
 
-  const contacts = accessMap[session.formation.id] ?? [];
-  const eligible = contacts.filter(
+  const enrolled = enrolledMap[session.formation.id] ?? [];
+  const eligible = enrolled.filter(
     (a) => !session.participants.some((p) => p.userId === a.user.id)
   );
 
@@ -352,7 +355,7 @@ function ParticipantPicker({
           onClick={() => setOpen(true)}
           className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
         >
-          + Inscrire un participant (parmi les accès à la formation)
+          + Inscrire un participant (parmi les inscrits à la formation)
         </button>
       ) : (
         <div className="flex gap-2 items-center">
@@ -361,10 +364,10 @@ function ParticipantPicker({
             onChange={(e) => setChoice(e.target.value)}
             className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs"
           >
-            <option value="">Choisir un contact…</option>
+            <option value="">Choisir un apprenant…</option>
             {eligible.map((a) => (
               <option key={a.user.id} value={a.user.id}>
-                {a.user.name} ({a.user.client?.name ?? a.user.email})
+                {a.user.name} ({a.user.email})
               </option>
             ))}
           </select>

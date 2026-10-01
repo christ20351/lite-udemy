@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { requireAuth, requireStaff } from '../lib/auth.js';
+import { requireAuth, requireEquipe, isGestion, canManageFormation } from '../lib/auth.js';
 
 export const sessionsRouter = Router();
-sessionsRouter.use(requireAuth, requireStaff);
+sessionsRouter.use(requireAuth, requireEquipe);
 
 const ISO_DATETIME = z.string().datetime({ offset: true });
 
@@ -25,10 +25,36 @@ const sessionUpdateSchema = sessionSchema.omit({ formationId: true }).extend({
   endAt: ISO_DATETIME.optional(),
 });
 
+/** Un formateur ne gère que les sessions de ses formations (ou celles
+ *  où il est le formateur) ; ADMIN et GESTIONNAIRE gèrent tout. */
+async function canManageSession(
+  user: { id: string; role: string },
+  sessionId: string
+): Promise<boolean> {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { trainerId: true, formationId: true },
+  });
+  if (!session) return false;
+  if (isGestion(user.role) || session.trainerId === user.id) return true;
+  return canManageFormation(user as never, session.formationId);
+}
+
 sessionsRouter.get('/', async (req, res) => {
   const { formationId } = req.query as { formationId?: string };
+  const formateurOnly = req.user!.role === 'FORMATEUR';
   const sessions = await prisma.session.findMany({
-    where: formationId ? { formationId } : undefined,
+    where: {
+      ...(formationId ? { formationId } : {}),
+      ...(formateurOnly
+        ? {
+            OR: [
+              { trainerId: req.user!.id },
+              { formation: { instructors: { some: { id: req.user!.id } } } },
+            ],
+          }
+        : {}),
+    },
     orderBy: { startAt: 'asc' },
     include: {
       formation: { select: { id: true, title: true } },
@@ -48,16 +74,27 @@ sessionsRouter.post('/', async (req, res) => {
   }
   const formation = await prisma.formation.findUnique({ where: { id: parsed.data.formationId } });
   if (!formation) return res.status(404).json({ error: 'Formation introuvable' });
+  if (!(await canManageFormation(req.user!, formation.id))) {
+    return res.status(403).json({ error: 'Formation non assignée' });
+  }
   const { startAt, endAt, trainerId, ...rest } = parsed.data;
   if (new Date(startAt) >= new Date(endAt)) {
     return res.status(400).json({ error: 'La date de fin doit être après la date de début' });
+  }
+  // Un formateur anime lui-même les sessions de ses formations
+  const effectiveTrainerId = req.user!.role === 'FORMATEUR' ? req.user!.id : trainerId || null;
+  if (effectiveTrainerId) {
+    const trainer = await prisma.user.findUnique({ where: { id: effectiveTrainerId } });
+    if (!trainer || trainer.role !== 'FORMATEUR') {
+      return res.status(400).json({ error: 'Le formateur désigné est introuvable' });
+    }
   }
   const session = await prisma.session.create({
     data: {
       ...rest,
       startAt: new Date(startAt),
       endAt: new Date(endAt),
-      trainerId: trainerId || null,
+      trainerId: effectiveTrainerId,
       formationId: formation.id,
     },
     include: { formation: { select: { title: true } }, trainer: { select: { name: true } } },
@@ -68,15 +105,26 @@ sessionsRouter.post('/', async (req, res) => {
 sessionsRouter.patch('/:id', async (req, res) => {
   const parsed = sessionUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Données invalides' });
+  if (!(await canManageSession(req.user!, (req.params.id as string)))) {
+    return res.status(403).json({ error: 'Session non assignée' });
+  }
+  const { startAt, endAt, trainerId, ...rest } = parsed.data;
+  if (trainerId !== undefined && trainerId) {
+    const trainer = await prisma.user.findUnique({ where: { id: trainerId } });
+    if (!trainer || trainer.role !== 'FORMATEUR') {
+      return res.status(400).json({ error: 'Le formateur désigné est introuvable' });
+    }
+  }
   try {
-    const { startAt, endAt, trainerId, ...rest } = parsed.data;
     const session = await prisma.session.update({
-      where: { id: req.params.id },
+      where: { id: (req.params.id as string) },
       data: {
         ...rest,
         ...(startAt ? { startAt: new Date(startAt) } : {}),
         ...(endAt ? { endAt: new Date(endAt) } : {}),
-        ...(trainerId !== undefined ? { trainerId: trainerId || null } : {}),
+        ...(trainerId !== undefined && req.user!.role !== 'FORMATEUR'
+          ? { trainerId: trainerId || null }
+          : {}),
       },
     });
     res.json({ session });
@@ -86,21 +134,27 @@ sessionsRouter.patch('/:id', async (req, res) => {
 });
 
 sessionsRouter.delete('/:id', async (req, res) => {
+  if (!(await canManageSession(req.user!, (req.params.id as string)))) {
+    return res.status(403).json({ error: 'Session non assignée' });
+  }
   try {
-    await prisma.session.delete({ where: { id: req.params.id } });
+    await prisma.session.delete({ where: { id: (req.params.id as string) } });
     res.json({ ok: true });
   } catch {
     res.status(404).json({ error: 'Session introuvable' });
   }
 });
 
-// Inscrire des contacts à une session (avec contrôle de capacité)
+// Inscrire des apprenants à une session (avec contrôle de capacité)
 sessionsRouter.post('/:id/participants', async (req, res) => {
   const schema = z.object({ userIds: z.array(z.string()).min(1) });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'userIds requis' });
+  if (!(await canManageSession(req.user!, (req.params.id as string)))) {
+    return res.status(403).json({ error: 'Session non assignée' });
+  }
   const session = await prisma.session.findUnique({
-    where: { id: req.params.id },
+    where: { id: (req.params.id as string) },
     include: { _count: { select: { participants: true } } },
   });
   if (!session) return res.status(404).json({ error: 'Session introuvable' });
@@ -128,13 +182,105 @@ sessionsRouter.post('/:id/participants', async (req, res) => {
 });
 
 // Marquer présence / absences
+const dateFR = (d: Date) =>
+  d.toLocaleDateString('fr-FR', {
+    weekday: 'long', day: 'numeric', month: 'long',
+  });
+const heureFR = (d: Date) =>
+  d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+/** Reporter une session : décale début/fin (durée conservée) et notifie
+ *  automatiquement les apprenants inscrits à la formation ainsi que les
+ *  formateurs assignés à celle-ci (formateur de la session inclus). */
+sessionsRouter.post('/:id/reschedule', async (req, res) => {
+  const schema = z.object({ startAt: ISO_DATETIME });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'startAt requis' });
+  if (!(await canManageSession(req.user!, req.params.id as string))) {
+    return res.status(403).json({ error: 'Session non assignée' });
+  }
+
+  const session = await prisma.session.findUnique({
+    where: { id: req.params.id as string },
+    include: {
+      formation: {
+        select: {
+          id: true, title: true,
+          instructors: { select: { id: true } },
+          enrollments: { select: { userId: true } },
+        },
+      },
+    },
+  });
+  if (!session) return res.status(404).json({ error: 'Session introuvable' });
+
+  const newStart = new Date(parsed.data.startAt);
+  const duration =
+    session.endAt.getTime() - session.startAt.getTime();
+  const newEnd = new Date(newStart.getTime() + duration);
+  const oldStart = new Date(session.startAt);
+
+  // Rien à faire si la date ne bouge pas (même jour)
+  const sameDay =
+    oldStart.getFullYear() === newStart.getFullYear() &&
+    oldStart.getMonth() === newStart.getMonth() &&
+    oldStart.getDate() === newStart.getDate();
+
+  const updated = await prisma.session.update({
+    where: { id: session.id },
+    data: { startAt: newStart, endAt: newEnd },
+  });
+
+  let notified = 0;
+  if (!sameDay) {
+    const destinataires = new Map<string, 'APPRENANT' | 'EQUIPE'>();
+
+    // Apprenants inscrits à la formation
+    for (const e of session.formation.enrollments) {
+      if (e.userId !== req.user!.id) {
+        destinataires.set(e.userId, 'APPRENANT');
+      }
+    }
+    // Formateurs assignés à la formation + formateur de la session
+    for (const i of session.formation.instructors) {
+      if (i.id !== req.user!.id) destinataires.set(i.id, 'EQUIPE');
+    }
+    if (session.trainerId && session.trainerId !== req.user!.id) {
+      destinataires.set(session.trainerId, 'EQUIPE');
+    }
+
+    const quand = `${dateFR(newStart)} à ${heureFR(newStart)}`;
+    const avant = `${dateFR(oldStart)} à ${heureFR(oldStart)}`;
+
+    const data = [...destinataires.entries()].map(([userId, kind]) => ({
+      userId,
+      type: 'SESSION_RESCHEDULED',
+      title: `Session reportée : « ${session.title} »`,
+      body:
+        kind === 'APPRENANT'
+          ? `Vous étiez inscrit${''} le ${avant}. La session a lieu désormais le ${quand}.`
+          : `Session que vous encadrez : déplacée de ${avant} vers ${quand}.`,
+      link: kind === 'APPRENANT' ? '/mes-sessions' : '/backoffice/calendar',
+    }));
+    if (data.length > 0) {
+      await prisma.notification.createMany({ data });
+      notified = data.length;
+    }
+  }
+
+  res.json({ session: updated, notified, newStartAt: updated.startAt });
+});
+
 sessionsRouter.patch('/:id/participants/:userId', async (req, res) => {
   const schema = z.object({ attended: z.boolean() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'attended (booléen) requis' });
+  if (!(await canManageSession(req.user!, (req.params.id as string)))) {
+    return res.status(403).json({ error: 'Session non assignée' });
+  }
   try {
     const participant = await prisma.sessionParticipant.update({
-      where: { sessionId_userId: { sessionId: req.params.id, userId: req.params.userId } },
+      where: { sessionId_userId: { sessionId: (req.params.id as string), userId: (req.params.userId as string) } },
       data: { attended: parsed.data.attended },
     });
     res.json({ participant });
@@ -144,9 +290,12 @@ sessionsRouter.patch('/:id/participants/:userId', async (req, res) => {
 });
 
 sessionsRouter.delete('/:id/participants/:userId', async (req, res) => {
+  if (!(await canManageSession(req.user!, (req.params.id as string)))) {
+    return res.status(403).json({ error: 'Session non assignée' });
+  }
   try {
     await prisma.sessionParticipant.delete({
-      where: { sessionId_userId: { sessionId: req.params.id, userId: req.params.userId } },
+      where: { sessionId_userId: { sessionId: (req.params.id as string), userId: (req.params.userId as string) } },
     });
     res.json({ ok: true });
   } catch {

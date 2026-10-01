@@ -3,8 +3,8 @@ import { AuthProvider } from "@/lib/auth";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Lite Academy — CRM & Formations",
-  description: "Système unifié de CRM et de gestion des formations",
+  title: "LoraOne — Formations en ligne",
+  description: "Plateforme de formations en ligne",
 };
 
 // Applique le thème AVANT le premier rendu pour éviter tout flash.

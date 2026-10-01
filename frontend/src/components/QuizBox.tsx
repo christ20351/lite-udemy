@@ -1,6 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  Check,
+  CircleAlert,
+  CircleCheck,
+  CircleX,
+  FlaskConical,
+  RefreshCw,
+  Trophy,
+} from "lucide-react";
 import { api } from "@/lib/api";
 
 type QuizData = {
@@ -69,7 +78,10 @@ export default function QuizBox({ lessonId }: { lessonId: string }) {
   return (
     <section className="card mt-6 p-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-fg">🧪 Quiz de la leçon</h2>
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-fg">
+          <FlaskConical className="h-5 w-5 text-primary" />
+          Quiz de la leçon
+        </h2>
         {data.bestAttempt && !result && (
           <span className="chip bg-surface-2 text-muted">
             Meilleur score : {data.bestAttempt.score}/{data.bestAttempt.total}
@@ -82,21 +94,26 @@ export default function QuizBox({ lessonId }: { lessonId: string }) {
           <div
             className={`rounded-xl border p-5 text-center ${
               result.score === result.total
-                ? "border-emerald-500/30 bg-emerald-500/10"
+                ? "border-indigo-500/30 bg-indigo-500/10"
                 : result.score / result.total >= 0.5
-                  ? "border-amber-500/30 bg-amber-500/10"
-                  : "border-red-500/30 bg-red-500/10"
+                  ? "border-line bg-surface-2"
+                  : "notice-box flex-col items-center"
             }`}
           >
             <p className="text-4xl font-bold text-fg">
               {result.score}/{result.total}
             </p>
-            <p className="mt-1 text-sm text-muted">
-              {result.score === result.total
-                ? "Parfait ! 🎉"
-                : result.score / result.total >= 0.5
-                  ? "Pas mal — rejouable pour progresser."
-                  : "Relisez la leçon et retentez votre chance !"}
+            <p className="mt-1 flex items-center justify-center gap-1.5 text-sm text-muted">
+              {result.score === result.total ? (
+                <>
+                  <Trophy className="h-4 w-4 text-primary" />
+                  Parfait !
+                </>
+              ) : result.score / result.total >= 0.5 ? (
+                "Pas mal — rejouable pour progresser."
+              ) : (
+                "Relisez la leçon et retentez votre chance !"
+              )}
             </p>
           </div>
 
@@ -106,12 +123,17 @@ export default function QuizBox({ lessonId }: { lessonId: string }) {
                 key={i}
                 className={`rounded-lg border p-3 text-sm ${
                   c.ok
-                    ? "border-emerald-500/30 bg-emerald-500/5"
-                    : "border-red-500/30 bg-red-500/5"
+                    ? "border-indigo-500/30 bg-indigo-500/5"
+                    : "border-line bg-surface-2"
                 }`}
               >
-                <p className="font-medium text-fg">
-                  {c.ok ? "✅" : "❌"} {c.question}
+                <p className="flex items-start gap-2 font-medium text-fg">
+                  {c.ok ? (
+                    <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  ) : (
+                    <CircleX className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+                  )}
+                  <span>{c.question}</span>
                 </p>
                 {!c.ok && (
                   <p className="mt-1 text-xs text-muted">
@@ -124,7 +146,8 @@ export default function QuizBox({ lessonId }: { lessonId: string }) {
           </div>
 
           <button onClick={() => setResult(null)} className="btn-ghost mt-4 w-full">
-            ↻ Rejouer le quiz
+            <RefreshCw className="h-4 w-4" />
+            Rejouer le quiz
           </button>
         </div>
       ) : (
@@ -155,7 +178,7 @@ export default function QuizBox({ lessonId }: { lessonId: string }) {
                               : "border-line"
                           }`}
                         >
-                          {checked ? "✓" : ""}
+                          {checked ? <Check className="h-3 w-3" /> : ""}
                         </span>
                         {c.text}
                       </button>
@@ -167,15 +190,16 @@ export default function QuizBox({ lessonId }: { lessonId: string }) {
           </div>
 
           {error && (
-            <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
-              {error}
+            <p className="notice-box mt-3">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{error}</span>
             </p>
           )}
 
           <button
             onClick={submit}
             disabled={!allAnswered || submitting}
-            className="btn-primary mt-5 w-full"
+            className="btn-gradient mt-5 w-full"
           >
             {submitting
               ? "Correction…"

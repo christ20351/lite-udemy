@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import LessonEditor, { type LessonBlock } from "@/components/LessonEditor";
 import { api, API_URL } from "@/lib/api";
+import { useAuth, isGestion } from "@/lib/auth";
+import { BellRing, CircleAlert, CircleCheck, FileText, Image as ImageIcon, Rocket, TriangleAlert, UserRound, Video } from "lucide-react";
 
 type Lesson = {
   id: string;
@@ -31,12 +33,17 @@ type Formation = {
   mode: "ONLINE" | "ONSITE" | "HYBRID";
   status: "DRAFT" | "PUBLISHED";
   price: number | null;
+  updatedAt: string;
+  thumbnailUrl: string | null;
+  instructors: Array<{ id: string; name: string; email: string }>;
   sections: Section[];
 };
 
 export default function FormationEditorPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
+  const { user } = useAuth();
+  const gestion = isGestion(user?.role);
 
   const [f, setF] = useState<Formation | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,11 +55,18 @@ export default function FormationEditorPage() {
     mode: "ONLINE",
     price: "" as string,
   });
+  const [formateursOptions, setFormateursOptions] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [formateurChoice, setFormateurChoice] = useState("");
+  const coverInput = useRef<HTMLInputElement>(null);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [thumbUploading, setThumbUploading] = useState(false);
 
   // état d'édition
   const [newSection, setNewSection] = useState("");
   const [newLessons, setNewLessons] = useState<Record<string, string>>({});
   const [newLessonVideos, setNewLessonVideos] = useState<Record<string, File | undefined>>({});
+  const [newLessonVideoPreviews, setNewLessonVideoPreviews] = useState<Record<string, string>>({});
   const [editingLesson, setEditingLesson] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -62,6 +76,7 @@ export default function FormationEditorPage() {
     try {
       const data = await api(`/formations/${id}`);
       setF(data.formation);
+      setThumbUrl(data.formation.thumbnailUrl ?? null);
       setInfo({
         title: data.formation.title,
         description: data.formation.description ?? "",
@@ -76,7 +91,13 @@ export default function FormationEditorPage() {
 
   useEffect(() => {
     load();
-  }, [load]);
+    if (gestion) {
+      api("/formations/formateurs/options")
+        .then((d) => setFormateursOptions(d.formateurs))
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, gestion]);
 
   function flash(msg: string) {
     setNotice(msg);
@@ -106,12 +127,32 @@ export default function FormationEditorPage() {
         method: "PATCH",
         body: { videoPath: data.url },
       });
-      flash("Vidéo téléversée ✓");
+      flash("Vidéo téléversée");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload échoué");
     } finally {
       setUploading(null);
+    }
+  }
+
+  async function uploadCover(file: File) {
+    setUploadingCover(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("image", file);
+      const data = await api("/uploads/image", { method: "POST", body: fd });
+      await api(`/formations/${f!.id}`, {
+        method: "PATCH",
+        body: { thumbnailUrl: data.url },
+      });
+      flash("Image de couverture mise à jour ✓");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload échoué");
+    } finally {
+      setUploadingCover(false);
     }
   }
 
@@ -126,7 +167,7 @@ export default function FormationEditorPage() {
   const totalLessons = f.sections.reduce((acc, s) => acc + s.lessons.length, 0);
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className={`p-8 ${editingLesson ? "max-w-6xl" : "max-w-4xl"}`}>
       <Link href="/backoffice/formations" className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline">
         ← Toutes les formations
       </Link>
@@ -135,43 +176,158 @@ export default function FormationEditorPage() {
         <div>
           <h1 className="text-2xl font-bold">{f.title}</h1>
           <p className="text-muted text-sm mt-1">
-            {totalLessons} leçon{totalLessons > 1 ? "s" : ""} · slug : {f.slug}
+            {totalLessons} leçon{totalLessons > 1 ? "s" : ""} · slug : {f.slug} · modifiée le{" "}
+            {new Date(f.updatedAt).toLocaleDateString("fr-FR", {
+              day: "numeric",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
           </p>
         </div>
-        {f.status === "PUBLISHED" ? (
-          <div className="flex items-center gap-2">
-            <span className="rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-xs font-medium px-3 py-1">
-              Publiée
+        {gestion ? (
+          f.status === "PUBLISHED" ? (
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 text-xs font-medium px-3 py-1">
+                Publiée
+              </span>
+              <button
+                onClick={() => run(() => api(`/formations/${f.id}/unpublish`, { method: "POST" }), "Dépubliée")}
+                className="text-xs text-muted hover:underline"
+              >
+                Repasser en brouillon
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => run(() => api(`/formations/${f.id}/publish`, { method: "POST" }))}
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700"
+            >
+              <Rocket className="h-4 w-4" aria-hidden />
+              Publier
+            </button>
+          )
+        ) : (
+          <div className="flex items-center gap-3">
+            <span
+              className={`rounded-full text-xs font-medium px-3 py-1 ${
+                f.status === "PUBLISHED"
+                  ? "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400"
+                  : "bg-surface-2 text-muted"
+              }`}
+            >
+              {f.status === "PUBLISHED" ? "Publiée" : "Brouillon"}
             </span>
             <button
-              onClick={() => run(() => api(`/formations/${f.id}/unpublish`, { method: "POST" }), "Dépubliée")}
-              className="text-xs text-muted hover:underline"
+              disabled={totalLessons === 0}
+              onClick={() =>
+                run(
+                  () =>
+                    api(`/formations/${f.id}/notify-ready`, {
+                      method: "POST",
+                      body: {},
+                    }),
+                  "La gestion a été prévenue — elle peut relire le contenu depuis sa file de notifications"
+                )
+              }
+              title={
+                totalLessons === 0
+                  ? "Ajoutez d'abord au moins une leçon"
+                  : "Signaler à l'ADMIN et aux GESTIONNAIRES que le contenu est prêt ou à jour"
+              }
+              className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm font-medium text-fg-soft transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Repasser en brouillon
+              <BellRing className="h-4 w-4 text-primary" aria-hidden />
+              Prévenir la gestion
             </button>
           </div>
-        ) : (
-          <button
-            onClick={() => run(() => api(`/formations/${f.id}/publish`, { method: "POST" }))}
-            className="rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-700"
-          >
-            🚀 Publier
-          </button>
         )}
       </div>
 
       {notice && (
-        <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-sm px-3 py-2">
-          {notice}
+        <div className="notice-box mt-4">
+          <CircleCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+          <span>{notice}</span>
         </div>
       )}
       {error && (
-        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-sm px-3 py-2">
-          {error}
+        <div className="notice-box mt-4">
+          <CircleAlert className="h-4 w-4 shrink-0" aria-hidden />
+          <span>{error}</span>
         </div>
       )}
 
-      {/* ── Infos générales ─────────────────────────────────────────── */}
+      {/* ── Formateurs assignés (gestion) ───────────────────────────── */}
+      {gestion && (
+        <section className="mt-8 bg-surface border border-line rounded-xl p-5">
+          <h2 className="font-semibold">Formateurs assignés</h2>
+          <p className="text-xs text-muted mt-1">
+            Le formateur construit le contenu de la formation et anime ses sessions.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {f.instructors.map((i) => (
+              <span
+                key={i.id}
+                className="inline-flex items-center gap-2 rounded-full bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 text-xs px-3 py-1.5"
+              >
+                <UserRound className="h-4 w-4 shrink-0" aria-hidden />
+                {i.name}
+                <button
+                  title="Retirer"
+                  onClick={() =>
+                    run(
+                      () => api(`/formations/${f.id}/instructors/${i.id}`, { method: "DELETE" }),
+                      "Formateur retiré"
+                    )
+                  }
+                  className="font-bold opacity-60 hover:opacity-100"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {f.instructors.length === 0 && (
+              <span className="text-xs text-faint">Aucun formateur assigné.</span>
+            )}
+          </div>
+          <div className="mt-3 flex gap-2 items-center">
+            <select
+              value={formateurChoice}
+              onChange={(e) => setFormateurChoice(e.target.value)}
+              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm"
+            >
+              <option value="">Choisir un formateur…</option>
+              {formateursOptions
+                .filter((o) => !f.instructors.some((i) => i.id === o.id))
+                .map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+            </select>
+            <button
+              disabled={!formateurChoice}
+              onClick={() => {
+                run(
+                  () =>
+                    api(`/formations/${f.id}/instructors`, {
+                      method: "POST",
+                      body: { userId: formateurChoice },
+                    }),
+                  "Formateur assigné"
+                );
+                setFormateurChoice("");
+              }}
+              className="rounded-lg bg-primary text-white px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+            >
+              Assigner
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* ── Infos générales (gestion) ───────────────────────────────── */}
+      {gestion && (
       <section className="mt-8 bg-surface border border-line rounded-xl p-5">
         <h2 className="font-semibold">Informations</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
@@ -204,7 +360,7 @@ export default function FormationEditorPage() {
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">Prix (€, vide = gratuit)</label>
+            <label className="block text-xs font-medium mb-1">Prix (FCFA, vide = gratuit)</label>
             <input
               type="number"
               min={0}
@@ -234,6 +390,55 @@ export default function FormationEditorPage() {
               Enregistrer
             </button>
           </div>
+          <div className="md:col-span-3 border-t border-line pt-4">
+            <label className="block text-xs font-medium mb-1.5">
+              Image de couverture — visible par les apprenants (catalogue, accueil)
+            </label>
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="relative h-24 w-44 overflow-hidden rounded-xl border border-line">
+                {f.thumbnailUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={`${API_URL}${f.thumbnailUrl}`}
+                    alt="Couverture"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-surface-2 text-[11px] text-faint">
+                    Aucune image — dégradé auto
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                {uploadingCover ? (
+                  <span className="text-xs text-primary animate-pulse">Téléversement…</span>
+                ) : (
+                  <button
+                    onClick={() => coverInput.current?.click()}
+                    className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-strong"
+                  >
+                    {f.thumbnailUrl ? "Remplacer l'image" : "+ Ajouter une image"}
+                  </button>
+                )}
+                {f.thumbnailUrl && (
+                  <button
+                    onClick={() =>
+                      run(
+                        () => api(`/formations/${f.id}`, { method: "PATCH", body: { thumbnailUrl: null } }),
+                        "Image retirée"
+                      )
+                    }
+                    className="text-xs text-muted hover:text-red-500 hover:underline"
+                  >
+                    Retirer (revenir au dégradé auto)
+                  </button>
+                )}
+                <p className="text-[11px] text-faint">
+                  jpg, png, webp… — sans image, un dégradé unique à la formation est généré.
+                </p>
+              </div>
+            </div>
+          </div>
           <div className="md:col-span-3">
             <label className="block text-xs font-medium mb-1">Description</label>
             <textarea
@@ -243,8 +448,79 @@ export default function FormationEditorPage() {
               className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm"
             />
           </div>
+          <div className="md:col-span-3">
+            <label className="block text-xs font-medium mb-1">
+              Image de couverture (fond de la box de la formation)
+            </label>
+            <div className="flex items-center gap-3">
+              <div className="flex h-20 w-32 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-line bg-surface-2 text-muted">
+                {thumbUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={`${API_URL}${thumbUrl}`}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <ImageIcon className="h-5 w-5" aria-hidden />
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="btn-ghost cursor-pointer w-fit text-xs">
+                  {thumbUploading ? "Téléversement…" : thumbUrl ? "Remplacer l'image" : "Choisir une image"}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setThumbUploading(true);
+                      const fd = new FormData();
+                      fd.append("image", file);
+                      api("/uploads/image", { method: "POST", body: fd })
+                        .then((d) =>
+                          run(
+                            () =>
+                              api(`/formations/${f!.id}`, {
+                                method: "PATCH",
+                                body: { thumbnailUrl: d.url },
+                              }),
+                            "Image de couverture mise à jour"
+                          )
+                        )
+                        .catch((err) =>
+                          setError(err instanceof Error ? err.message : "Upload échoué")
+                        )
+                        .finally(() => setThumbUploading(false));
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                {thumbUrl && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      run(
+                        () =>
+                          api(`/formations/${f!.id}`, {
+                            method: "PATCH",
+                            body: { thumbnailUrl: null },
+                          }),
+                        "Image retirée"
+                      ).then(() => setThumbUrl(null))
+                    }
+                    className="text-xs text-muted hover:text-fg hover:underline w-fit"
+                  >
+                    Retirer l&apos;image
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </section>
+      )}
 
       {/* ── Curriculum ──────────────────────────────────────────────── */}
       <section className="mt-8">
@@ -258,7 +534,7 @@ export default function FormationEditorPage() {
                 </p>
                 <button
                   onClick={() => run(() => api(`/formations/sections/${s.id}`, { method: "DELETE" }), "Section supprimée")}
-                  className="text-xs text-red-500 dark:text-red-400 hover:underline"
+                  className="text-xs text-muted hover:text-fg hover:underline"
                 >
                   Supprimer
                 </button>
@@ -277,19 +553,53 @@ export default function FormationEditorPage() {
                       />
                     ) : (
                       <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">
-                            {l.position}. {l.title}{" "}
-                            {l.isPreview && (
-                              <span className="text-xs text-amber-600">(aperçu gratuit)</span>
-                            )}
-                          </p>
-                          <p className="text-xs text-faint mt-0.5 flex gap-2">
-                            {l.videoPath ? "🎬 vidéo" : ""}
-                            {l.videoPath && l.content ? "·" : ""}
-                            {l.content ? "📝 texte" : ""}
-                            {!l.videoPath && !l.content ? "⚠️ vide" : ""}
-                          </p>
+                        <div className="flex min-w-0 items-center gap-3">
+                          {l.videoPath && (
+                            // eslint-disable-next-line jsx-a11y/media-has-caption
+                            <video
+                              src={`${API_URL}${l.videoPath}`}
+                              muted
+                              preload="metadata"
+                              className="h-16 w-28 shrink-0 rounded-none border border-line bg-surface-2 object-cover"
+                            />
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {l.position}. {l.title}{" "}
+                              {l.isPreview && (
+                                <span className="text-xs text-primary">(aperçu gratuit)</span>
+                              )}
+                            </p>
+                            <p className="text-xs text-faint mt-0.5 flex flex-wrap items-center gap-2">
+                              {l.videoPath ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <Video className="h-3.5 w-3.5" aria-hidden />
+                                  vidéo
+                                </span>
+                              ) : (
+                                ""
+                              )}
+                              {l.videoPath && (l.content || (l.blocks && l.blocks.length > 0))
+                                ? "·"
+                                : ""}
+                              {l.content || (l.blocks && l.blocks.length > 0) ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <FileText className="h-3.5 w-3.5" aria-hidden />
+                                  {l.content ? "texte" : `${l.blocks!.length} bloc${l.blocks!.length > 1 ? "s" : ""}`}
+                                </span>
+                              ) : (
+                                ""
+                              )}
+                              {!l.videoPath && !l.content && !(l.blocks && l.blocks.length > 0) ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
+                                  vide
+                                </span>
+                              ) : (
+                                ""
+                              )}
+                            </p>
+                          </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           {uploading === l.id ? (
@@ -332,7 +642,7 @@ export default function FormationEditorPage() {
                             onClick={() =>
                               run(() => api(`/formations/lessons/${l.id}`, { method: "DELETE" }), "Leçon supprimée")
                             }
-                            className="text-xs text-red-500 dark:text-red-400 hover:underline"
+                            className="text-xs text-muted hover:text-fg hover:underline"
                           >
                             ×
                           </button>
@@ -355,6 +665,10 @@ export default function FormationEditorPage() {
                     });
                     setNewLessons({ ...newLessons, [s.id]: "" });
                     setNewLessonVideos((v) => ({ ...v, [s.id]: undefined }));
+                    setNewLessonVideoPreviews((p) => {
+                      if (p[s.id]) URL.revokeObjectURL(p[s.id]!);
+                      return { ...p, [s.id]: "" };
+                    });
                     if (file) {
                       const fd = new FormData();
                       fd.append("video", file);
@@ -364,7 +678,7 @@ export default function FormationEditorPage() {
                         body: { videoPath: up.url },
                       });
                     }
-                  }, file ? "Leçon ajoutée avec sa vidéo ✓" : "Leçon ajoutée");
+                  }, file ? "Leçon ajoutée avec sa vidéo" : "Leçon ajoutée");
                 }}
                 className="space-y-2 px-4 py-3 border-t border-line"
               >
@@ -382,23 +696,38 @@ export default function FormationEditorPage() {
                     + Leçon
                   </button>
                 </div>
-                {/* Vidéo optionnelle dès la création */}
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-muted hover:text-fg">
-                  🎬
+                {/* Vidéo optionnelle dès la création, aperçu immédiat */}
+                <label className="flex cursor-pointer items-center gap-3 text-xs text-muted hover:text-fg">
                   {newLessonVideos[s.id] ? (
-                    <span className="text-emerald-600 dark:text-emerald-400">
-                      {newLessonVideos[s.id]!.name.slice(0, 40)} — sera téléversée à la création
-                    </span>
+                    <>
+                      <video
+                        src={newLessonVideoPreviews[s.id]}
+                        muted
+                        preload="metadata"
+                        className="h-16 w-28 shrink-0 rounded-none border border-line bg-surface-2 object-cover"
+                      />
+                      <span className="text-primary">
+                        {newLessonVideos[s.id]!.name.slice(0, 40)} — sera téléversée à la création
+                      </span>
+                    </>
                   ) : (
-                    <span>Joindre la vidéo de la leçon (mp4, webm, mov…)</span>
+                    <>
+                      <Video className="h-4 w-4 shrink-0" aria-hidden />
+                      <span>Joindre la vidéo de la leçon (mp4, webm, mov…)</span>
+                    </>
                   )}
                   <input
                     type="file"
                     accept="video/mp4,video/webm,video/quicktime,video/ogg,.mp4,.webm,.mov,.ogv"
                     className="hidden"
-                    onChange={(e) =>
-                      setNewLessonVideos((v) => ({ ...v, [s.id]: e.target.files?.[0] }))
-                    }
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      setNewLessonVideos((v) => ({ ...v, [s.id]: file }));
+                      setNewLessonVideoPreviews((p) => {
+                        if (p[s.id]) URL.revokeObjectURL(p[s.id]!);
+                        return { ...p, [s.id]: file ? URL.createObjectURL(file) : "" };
+                      });
+                    }}
                   />
                 </label>
               </form>
@@ -434,6 +763,19 @@ export default function FormationEditorPage() {
           </button>
         </form>
       </section>
+
+      {/* input fichier caché pour la couverture */}
+      <input
+        ref={coverInput}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) uploadCover(file);
+          e.target.value = "";
+        }}
+      />
 
       {/* input fichier caché pour l'upload vidéo */}
       <input

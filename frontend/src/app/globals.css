@@ -113,7 +113,55 @@ body {
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
   }
+
+  /* Danger neutre : la suppression se reconnaît à l'icône, pas à une couleur criarde */
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg border border-line
+      bg-surface px-3 py-2 text-sm font-medium text-muted transition-colors
+      hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  /* Tuile d'icône de marque (en-têtes de page, cartes stats) */
+  .icon-tile {
+    @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-xl
+      bg-gradient-to-br from-indigo-600 to-indigo-500 text-white shadow-md shadow-indigo-500/25;
+  }
+
+  /* Encart d'information ou d'erreur, sans couleur d'appoint */
+  .notice-box {
+    @apply flex items-start gap-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-fg-soft;
+  }
 }
 /* scrollbar masquée pour les carrousels */
 .scrollbar-none { scrollbar-width: none; }
 .scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* ── Portail apprenant : accents dégradés ──────────────────────────── */
+@layer components {
+  /* Bouton d'action signature du portail */
+  .btn-gradient {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5
+      text-sm font-bold text-white transition-all
+      hover:-translate-y-px hover:shadow-lg
+      disabled:cursor-not-allowed disabled:opacity-50;
+    background: linear-gradient(120deg, #6366f1 0%, #a855f7 55%, #ec4899 100%);
+    box-shadow: 0 8px 20px -8px rgb(168 85 247 / 0.55);
+  }
+  .btn-gradient:hover {
+    background: linear-gradient(120deg, #4f46e5 0%, #9333ea 55%, #db2777 100%);
+  }
+
+  /* Titre en dégradé */
+  .gradient-text {
+    background: linear-gradient(120deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Barre d'accent sous les titres de section du portail */
+  .accent-bar {
+    @apply inline-block h-1.5 w-8 rounded-full;
+    background: linear-gradient(90deg, #6366f1, #ec4899);
+  }
+}

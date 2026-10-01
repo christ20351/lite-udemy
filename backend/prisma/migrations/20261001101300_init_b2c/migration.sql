@@ -1,11 +1,5 @@
 -- CreateEnum
-CREATE TYPE "Role" AS ENUM ('STAFF', 'CONTACT');
-
--- CreateEnum
-CREATE TYPE "ClientType" AS ENUM ('COMPANY', 'INDIVIDUAL');
-
--- CreateEnum
-CREATE TYPE "ClientStatus" AS ENUM ('LEAD', 'PROSPECT', 'CLIENT', 'INACTIVE');
+CREATE TYPE "Role" AS ENUM ('ADMIN', 'GESTIONNAIRE', 'FORMATEUR', 'APPRENANT');
 
 -- CreateEnum
 CREATE TYPE "FormationMode" AS ENUM ('ONLINE', 'ONSITE', 'HYBRID');
@@ -14,10 +8,7 @@ CREATE TYPE "FormationMode" AS ENUM ('ONLINE', 'ONSITE', 'HYBRID');
 CREATE TYPE "FormationStatus" AS ENUM ('DRAFT', 'PUBLISHED');
 
 -- CreateEnum
-CREATE TYPE "InteractionType" AS ENUM ('CALL', 'EMAIL', 'MEETING', 'NOTE');
-
--- CreateEnum
-CREATE TYPE "SubscriptionStatus" AS ENUM ('ACTIVE', 'EXPIRED');
+CREATE TYPE "SessionModality" AS ENUM ('PRESENTIEL', 'ONLINE');
 
 -- CreateTable
 CREATE TABLE "User" (
@@ -25,40 +16,11 @@ CREATE TABLE "User" (
     "email" TEXT NOT NULL,
     "passwordHash" TEXT NOT NULL,
     "name" TEXT NOT NULL,
-    "role" "Role" NOT NULL DEFAULT 'CONTACT',
-    "clientId" TEXT,
+    "role" "Role" NOT NULL DEFAULT 'APPRENANT',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "User_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "Client" (
-    "id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "type" "ClientType" NOT NULL DEFAULT 'COMPANY',
-    "status" "ClientStatus" NOT NULL DEFAULT 'LEAD',
-    "email" TEXT,
-    "phone" TEXT,
-    "address" TEXT,
-    "notes" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "Client_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "Interaction" (
-    "id" TEXT NOT NULL,
-    "clientId" TEXT NOT NULL,
-    "authorId" TEXT,
-    "type" "InteractionType" NOT NULL DEFAULT 'NOTE',
-    "content" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "Interaction_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -71,6 +33,7 @@ CREATE TABLE "Formation" (
     "mode" "FormationMode" NOT NULL DEFAULT 'ONLINE',
     "status" "FormationStatus" NOT NULL DEFAULT 'DRAFT',
     "thumbnailUrl" TEXT,
+    "price" DOUBLE PRECISION,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -94,6 +57,7 @@ CREATE TABLE "Lesson" (
     "title" TEXT NOT NULL,
     "content" TEXT,
     "videoPath" TEXT,
+    "blocks" JSONB,
     "duration" INTEGER,
     "position" INTEGER NOT NULL DEFAULT 0,
     "isPreview" BOOLEAN NOT NULL DEFAULT false,
@@ -102,27 +66,14 @@ CREATE TABLE "Lesson" (
 );
 
 -- CreateTable
-CREATE TABLE "Subscription" (
-    "id" TEXT NOT NULL,
-    "clientId" TEXT NOT NULL,
-    "formationId" TEXT NOT NULL,
-    "status" "SubscriptionStatus" NOT NULL DEFAULT 'ACTIVE',
-    "seats" INTEGER NOT NULL DEFAULT 1,
-    "startedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "endsAt" TIMESTAMP(3),
-
-    CONSTRAINT "Subscription_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "Access" (
+CREATE TABLE "Enrollment" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "formationId" TEXT NOT NULL,
     "grantedById" TEXT,
     "grantedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "Access_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "Enrollment_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -146,6 +97,8 @@ CREATE TABLE "Session" (
     "endAt" TIMESTAMP(3) NOT NULL,
     "location" TEXT,
     "capacity" INTEGER NOT NULL DEFAULT 10,
+    "modality" "SessionModality" NOT NULL DEFAULT 'PRESENTIEL',
+    "meetingUrl" TEXT,
     "trainerId" TEXT,
 
     CONSTRAINT "Session_pkey" PRIMARY KEY ("id")
@@ -162,14 +115,48 @@ CREATE TABLE "SessionParticipant" (
     CONSTRAINT "SessionParticipant_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "Quiz" (
+    "id" TEXT NOT NULL,
+    "lessonId" TEXT NOT NULL,
+
+    CONSTRAINT "Quiz_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "QuizQuestion" (
+    "id" TEXT NOT NULL,
+    "quizId" TEXT NOT NULL,
+    "text" TEXT NOT NULL,
+    "choices" JSONB NOT NULL,
+    "order" INTEGER NOT NULL DEFAULT 0,
+
+    CONSTRAINT "QuizQuestion_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "QuizAttempt" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "lessonId" TEXT NOT NULL,
+    "quizId" TEXT NOT NULL,
+    "score" INTEGER NOT NULL,
+    "total" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "QuizAttempt_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "_FormationInstructors" (
+    "A" TEXT NOT NULL,
+    "B" TEXT NOT NULL,
+
+    CONSTRAINT "_FormationInstructors_AB_pkey" PRIMARY KEY ("A","B")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
-
--- CreateIndex
-CREATE INDEX "User_clientId_idx" ON "User"("clientId");
-
--- CreateIndex
-CREATE INDEX "Interaction_clientId_idx" ON "Interaction"("clientId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Formation_slug_key" ON "Formation"("slug");
@@ -181,10 +168,7 @@ CREATE INDEX "Section_formationId_idx" ON "Section"("formationId");
 CREATE INDEX "Lesson_sectionId_idx" ON "Lesson"("sectionId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Subscription_clientId_formationId_key" ON "Subscription"("clientId", "formationId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "Access_userId_formationId_key" ON "Access"("userId", "formationId");
+CREATE UNIQUE INDEX "Enrollment_userId_formationId_key" ON "Enrollment"("userId", "formationId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "LessonProgress_userId_lessonId_key" ON "LessonProgress"("userId", "lessonId");
@@ -195,14 +179,20 @@ CREATE INDEX "Session_formationId_idx" ON "Session"("formationId");
 -- CreateIndex
 CREATE UNIQUE INDEX "SessionParticipant_sessionId_userId_key" ON "SessionParticipant"("sessionId", "userId");
 
--- AddForeignKey
-ALTER TABLE "User" ADD CONSTRAINT "User_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- CreateIndex
+CREATE UNIQUE INDEX "Quiz_lessonId_key" ON "Quiz"("lessonId");
 
--- AddForeignKey
-ALTER TABLE "Interaction" ADD CONSTRAINT "Interaction_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- CreateIndex
+CREATE INDEX "QuizQuestion_quizId_idx" ON "QuizQuestion"("quizId");
 
--- AddForeignKey
-ALTER TABLE "Interaction" ADD CONSTRAINT "Interaction_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- CreateIndex
+CREATE INDEX "QuizAttempt_lessonId_idx" ON "QuizAttempt"("lessonId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "QuizAttempt_userId_lessonId_key" ON "QuizAttempt"("userId", "lessonId");
+
+-- CreateIndex
+CREATE INDEX "_FormationInstructors_B_index" ON "_FormationInstructors"("B");
 
 -- AddForeignKey
 ALTER TABLE "Section" ADD CONSTRAINT "Section_formationId_fkey" FOREIGN KEY ("formationId") REFERENCES "Formation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -211,19 +201,13 @@ ALTER TABLE "Section" ADD CONSTRAINT "Section_formationId_fkey" FOREIGN KEY ("fo
 ALTER TABLE "Lesson" ADD CONSTRAINT "Lesson_sectionId_fkey" FOREIGN KEY ("sectionId") REFERENCES "Section"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Subscription" ADD CONSTRAINT "Subscription_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Enrollment" ADD CONSTRAINT "Enrollment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Subscription" ADD CONSTRAINT "Subscription_formationId_fkey" FOREIGN KEY ("formationId") REFERENCES "Formation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Enrollment" ADD CONSTRAINT "Enrollment_formationId_fkey" FOREIGN KEY ("formationId") REFERENCES "Formation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Access" ADD CONSTRAINT "Access_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Access" ADD CONSTRAINT "Access_formationId_fkey" FOREIGN KEY ("formationId") REFERENCES "Formation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Access" ADD CONSTRAINT "Access_grantedById_fkey" FOREIGN KEY ("grantedById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Enrollment" ADD CONSTRAINT "Enrollment_grantedById_fkey" FOREIGN KEY ("grantedById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "LessonProgress" ADD CONSTRAINT "LessonProgress_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -242,3 +226,24 @@ ALTER TABLE "SessionParticipant" ADD CONSTRAINT "SessionParticipant_sessionId_fk
 
 -- AddForeignKey
 ALTER TABLE "SessionParticipant" ADD CONSTRAINT "SessionParticipant_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Quiz" ADD CONSTRAINT "Quiz_lessonId_fkey" FOREIGN KEY ("lessonId") REFERENCES "Lesson"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "QuizQuestion" ADD CONSTRAINT "QuizQuestion_quizId_fkey" FOREIGN KEY ("quizId") REFERENCES "Quiz"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "QuizAttempt" ADD CONSTRAINT "QuizAttempt_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "QuizAttempt" ADD CONSTRAINT "QuizAttempt_lessonId_fkey" FOREIGN KEY ("lessonId") REFERENCES "Lesson"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "QuizAttempt" ADD CONSTRAINT "QuizAttempt_quizId_fkey" FOREIGN KEY ("quizId") REFERENCES "Quiz"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "_FormationInstructors" ADD CONSTRAINT "_FormationInstructors_A_fkey" FOREIGN KEY ("A") REFERENCES "Formation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "_FormationInstructors" ADD CONSTRAINT "_FormationInstructors_B_fkey" FOREIGN KEY ("B") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

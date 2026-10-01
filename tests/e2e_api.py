@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests end-to-end de l'API lite-udemy (port 4100)."""
+"""Tests end-to-end de l'API lite-udemy (port 4100) — flux B2C multi-rôles."""
 import json
 import urllib.request
 import http.cookiejar
@@ -32,111 +32,204 @@ def check(name, cond, detail=""):
     results.append((name, cond, detail))
     print(f"{'✅' if cond else '❌'} {name}" + (f" — {detail}" if detail and not cond else ""))
 
-# ── Staff ─────────────────────────────────────────────────────────────
-staff = client()
-s, d = call(staff, "POST", "/auth/login", {"email": "admin@liteudemy.local", "password": "admin123"})
-check("login staff", s == 200)
+# ── Connexions (comptes du seed) ──────────────────────────────────────
+admin = client()
+s, d = call(admin, "POST", "/auth/login", {"email": "admin@liteudemy.local", "password": "admin123"})
+check("login admin", s == 200 and d["user"]["role"] == "ADMIN", str(d))
 
-# ── CRM : client + contact ───────────────────────────────────────────
-s, d = call(staff, "POST", "/clients", {"name": f"Delta Corp {SUFFIX}", "type": "COMPANY", "status": "PROSPECT"})
-check("créer client", s == 201, str(d))
-cid = d["client"]["id"]
+gest = client()
+s, d = call(gest, "POST", "/auth/login", {"email": "gestion@liteudemy.local", "password": "gestion123"})
+check("login gestionnaire", s == 200 and d["user"]["role"] == "GESTIONNAIRE")
 
-s, d = call(staff, "POST", f"/clients/{cid}/contacts", {"name": "Paul Test", "email": f"paul{SUFFIX}@delta.example", "password": "paul1234"})
-check("créer contact apprenant", s == 201, str(d))
-uid = d["contact"]["id"]
+seed_trainer = client()
+s, d = call(seed_trainer, "POST", "/auth/login", {"email": "formateur@liteudemy.local", "password": "formateur123"})
+check("login formateur (seed)", s == 200 and d["user"]["role"] == "FORMATEUR")
 
-s, d = call(staff, "GET", f"/clients/{cid}")
-check("fiche client complète", s == 200 and len(d["client"]["users"]) == 1)
+# ── Équipe (réservée à l'admin) ───────────────────────────────────────
+s, d = call(gest, "GET", "/team")
+check("équipe interdite au gestionnaire", s == 403)
 
-s, d = call(staff, "POST", f"/clients/{cid}/interactions", {"type": "CALL", "content": "Premier appel"})
-check("journaliser interaction", s == 201)
+s, d = call(admin, "POST", "/team", {
+    "name": "Nina Formatrice", "email": f"nina{SUFFIX}@team.example",
+    "password": "nina1234", "role": "FORMATEUR",
+})
+check("admin crée un formateur", s == 201 and d["member"]["role"] == "FORMATEUR", str(d))
+trainer_uid = d["member"]["id"]
 
-# ── Catalogue ─────────────────────────────────────────────────────────
-s, d = call(staff, "POST", "/formations", {"title": f"Formation Test {SUFFIX}", "mode": "ONLINE"})
-check("créer formation (brouillon)", s == 201 and d["formation"]["status"] == "DRAFT")
+trainer = client()
+s, d = call(trainer, "POST", "/auth/login", {"email": f"nina{SUFFIX}@team.example", "password": "nina1234"})
+check("login nouveau formateur", s == 200)
+
+# ── Formations : la gestion crée, le formateur construit ─────────────
+s, d = call(trainer, "POST", "/formations", {"title": f"Formation {SUFFIX}"})
+check("formateur ne peut PAS créer une formation", s == 403)
+
+s, d = call(gest, "POST", "/formations", {"title": f"Formation Test {SUFFIX}", "mode": "ONLINE", "price": 99})
+check("gestionnaire crée la formation (payante)", s == 201 and d["formation"]["status"] == "DRAFT")
 fid = d["formation"]["id"]
 
-s, d = call(staff, "POST", f"/formations/{fid}/publish")
-check("publish sans leçon refusé", s == 400)
+s, d = call(gest, "POST", f"/formations/{fid}/instructors", {"userId": trainer_uid})
+check("gestionnaire assigne le formateur", s == 200, str(d))
 
-s, d = call(staff, "POST", f"/formations/{fid}/sections", {"title": "Chapitre 1"})
-check("créer section", s == 201)
+s, d = call(trainer, "GET", "/me/notifications")
+ok = s == 200 and d["unread"] >= 1 and any("Formation Test" in n["title"] for n in d["notifications"])
+check("formateur notifié de l'assignation", ok, str(d))
+notif_id = next(n["id"] for n in d["notifications"] if "Formation Test" in n["title"])
+s, d = call(trainer, "PATCH", f"/me/notifications/{notif_id}/read")
+check("marquer la notification comme lue", s == 200 and d["notification"]["read"] is True)
+
+s, d = call(trainer, "GET", f"/formations/{fid}")
+check("formateur voit sa formation", s == 200)
+
+s, d = call(trainer, "GET", "/formations")
+titles = [f["title"] for f in d["formations"]]
+check("formateur ne voit QUE ses formations", all(t.startswith("Formation Test") for t in titles), str(titles))
+
+s, d = call(trainer, "PATCH", f"/formations/{fid}", {"price": 1})
+check("formateur ne peut pas modifier les métadonnées", s == 403)
+
+s, d = call(trainer, "POST", f"/formations/{fid}/publish")
+check("formateur ne peut pas publier", s == 403)
+
+s, d = call(trainer, "POST", f"/formations/{fid}/sections", {"title": "Chapitre 1"})
+check("formateur crée une section", s == 201)
 sid = d["section"]["id"]
 
-s, d = call(staff, "POST", f"/formations/sections/{sid}/lessons", {"title": "Leçon 1", "content": "<p>Bonjour</p>", "isPreview": True})
-check("créer leçon", s == 201)
+s, d = call(trainer, "POST", f"/formations/sections/{sid}/lessons", {"title": "Leçon 1", "content": "<p>Bonjour</p>", "isPreview": True})
+check("formateur crée une leçon", s == 201)
 lid = d["lesson"]["id"]
 
-s, d = call(staff, "POST", f"/formations/{fid}/publish")
-check("publish avec leçon", s == 200 and d["formation"]["status"] == "PUBLISHED")
+s, d = call(trainer, "PUT", f"/staff/quiz/lessons/{lid}/quiz", {
+    "questions": [
+        {"text": "2+2 ?", "choices": [{"text": "4", "correct": True}, {"text": "5", "correct": False}]},
+    ],
+})
+check("formateur crée le quiz de sa leçon", s == 200, str(d))
 
-# ── Souscription + accès ─────────────────────────────────────────────
-s, d = call(staff, "POST", "/subscriptions", {"clientId": cid, "formationId": fid, "seats": 2})
-check("souscription client→formation", s == 201)
+s, d = call(gest, "POST", f"/formations/{fid}/publish")
+check("gestionnaire publie (avec leçon)", s == 200 and d["formation"]["status"] == "PUBLISHED")
 
-s, d = call(staff, "POST", "/access", {"userId": uid, "formationId": fid})
-check("attribuer accès au contact", s == 201)
+# ── Apprenants : auto-inscription gratuite, gestion pour payant ──────
+learner = client()
+s, d = call(learner, "POST", "/auth/signup", {"name": "Paula Test", "email": f"paula{SUFFIX}@example.fr", "password": "paula123"})
+check("signup apprenant", s == 201 and d["user"]["role"] == "APPRENANT", str(d))
+learner_uid = d["user"]["id"]
 
-s, d = call(staff, "POST", "/access", {"userId": uid, "formationId": fid})
-check("double accès refusé", s == 409)
+s, d = call(learner, "POST", "/me/enroll", {"formationId": fid})
+check("auto-inscription refusée sur formation payante", s == 400, str(d))
+
+s, d = call(trainer, "POST", "/enrollments", {"userId": learner_uid, "formationId": fid})
+check("formateur inscrit l'apprenant (sa formation)", s == 201, str(d))
+
+s, d = call(trainer, "POST", "/enrollments", {"userId": learner_uid, "formationId": fid})
+check("double inscription refusée", s == 409)
+
+# Apprenant libre (auto-inscrit) : création d'une formation gratuite par la gestion
+s, d = call(gest, "POST", "/formations", {"title": f"Gratuite {SUFFIX}", "instructorId": trainer_uid})
+check("création liée directement au formateur", s == 201, str(d))
+free_fid = d["formation"]["id"]
+
+s, d = call(trainer, "GET", "/formations")
+titles = [f["title"] for f in d["formations"]]
+check("formateur voit la formation liée à la création", any(t.startswith("Gratuite") for t in titles), str(titles))
+
+s, d = call(trainer, "GET", "/me/notifications")
+ok = s == 200 and any("Gratuite" in n["title"] for n in d["notifications"])
+check("notification reçue dès la création", ok, str(d))
+s, d = call(gest, "POST", f"/formations/{free_fid}/sections", {"title": "Intro"})
+free_sid = d["section"]["id"]
+call(gest, "POST", f"/formations/sections/{free_sid}/lessons", {"title": "Bienvenue", "isPreview": True})
+call(gest, "POST", f"/formations/{free_fid}/publish")
+
+learner2 = client()
+s, d = call(learner2, "POST", "/auth/signup", {"name": "Bruno Test", "email": f"bruno{SUFFIX}@example.fr", "password": "bruno123"})
+learner2_uid = d["user"]["id"]
+call(learner2, "POST", "/me/enroll", {"formationId": free_fid})
+s, d = call(learner2, "GET", "/me/formations")
+titles = [f["title"] for f in d["formations"]]
+check("auto-inscription gratuite + isolation", any(t.startswith("Gratuite") for t in titles), str(titles))
+
+# ── Suivi des apprenants (équipe) ────────────────────────────────────
+s, d = call(trainer, "GET", "/learners")
+names = [l["name"] for l in d["learners"]]
+check("formateur : apprenants de ses formations", "Paula Test" in names and "Bruno Test" in names, str(names))
+
+s, d = call(gest, "GET", "/learners")
+names = [l["name"] for l in d["learners"]]
+check("gestion : tous les apprenants", "Paula Test" in names and "Bruno Test" in names, str(names))
+
+s, d = call(trainer, "GET", f"/learners/{learner_uid}")
+check("fiche apprenant (formateur, sa formation)", s == 200 and d["formations"][0]["title"].startswith("Formation Test"))
+
+s, d = call(trainer, "GET", "/learners/progression/kanban")
+# Scoping : uniquement les formations de Nina (Test + Gratuite), jamais celles du seed
+ok = s == 200 and d["cards"] and all(
+    c["formation"]["title"].startswith(("Formation Test", "Gratuite")) for c in d["cards"]
+)
+check("kanban de progression (scopé aux formations du formateur)", ok, str([c["formation"]["title"] for c in d["cards"]]))
 
 # ── Portail apprenant ────────────────────────────────────────────────
-paul = client()
-s, d = call(paul, "POST", "/auth/login", {"email": f"paul{SUFFIX}@delta.example", "password": "paul1234"})
-check("login contact", s == 200 and d["user"]["role"] == "CONTACT")
-
-s, d = call(paul, "GET", "/me/formations")
+s, d = call(learner, "GET", "/me/formations")
 check("portail: mes formations", s == 200 and len(d["formations"]) == 1 and d["formations"][0]["title"].startswith("Formation Test"))
 
-s, d = call(paul, "GET", f"/me/formations/formation-test-{SUFFIX}")
+s, d = call(learner, "GET", f"/me/formations/formation-test-{SUFFIX}")
 check("portail: détail formation", s == 200 and d["sections"][0]["lessons"][0]["title"] == "Leçon 1")
 
-s, d = call(paul, "GET", f"/me/lessons/{lid}")
+s, d = call(learner, "GET", f"/me/lessons/{lid}")
 check("portail: lire leçon", s == 200 and d["lesson"]["content"] == "<p>Bonjour</p>")
 
-s, d = call(paul, "PUT", f"/me/lessons/{lid}/progress", {"lastPosition": 42, "completed": True})
+s, d = call(learner, "PUT", f"/me/lessons/{lid}/progress", {"lastPosition": 42, "completed": True})
 check("portail: progression", s == 200 and d["progress"]["completed"] is True)
 
-s, d = call(paul, "GET", "/me/formations")
-check("portail: progression %", d["formations"][0]["percent"] == 100)
+s, d = call(learner, "GET", f"/me/quiz/lessons/{lid}/quiz")
+check("portail: quiz sans réponses", s == 200 and "correct" not in json.dumps(d["quiz"]["choices"] if "choices" in d["quiz"] else d["quiz"]))
 
-# ── Sécurité ──────────────────────────────────────────────────────────
+s, d = call(learner, "POST", f"/me/quiz/lessons/{lid}/quiz/attempt", {"answers": [[0]]})
+check("portail: tentative de quiz corrigée", s == 200 and d["score"] == 1, str(d))
+
+s, d = call(learner2, "GET", f"/me/formations/formation-test-{SUFFIX}")
+check("isolation: bruno ne voit pas la formation payante", s == 403)
+
+# ── Sécurité des rôles ────────────────────────────────────────────────
 anon = client()
 s, d = call(anon, "GET", "/me/formations")
 check("anonyme bloqué sur /me", s == 401)
 
-s, d = call(anon, "GET", "/clients")
-check("anonyme bloqué sur CRM", s == 401)
+s, d = call(anon, "GET", "/learners")
+check("anonyme bloqué sur /learners", s == 401)
 
-s, d = call(paul, "GET", "/clients")
-check("contact bloqué sur CRM (403)", s == 403)
+s, d = call(learner, "GET", "/learners")
+check("apprenant bloqué sur back-office (403)", s == 403)
 
-lea = client()
-call(lea, "POST", "/auth/login", {"email": "lea@acme.example", "password": "demo123"})
-s, d = call(lea, "GET", "/me/formations")
-titles = [f["title"] for f in d.get("formations", [])]
-check("Léa ne voit QUE Python (isolation)", not any(t.startswith("Formation Test") for t in titles), str(titles))
+s, d = call(trainer, "GET", "/stats/dashboard")
+check("formateur bloqué sur le dashboard gestion (403)", s == 403)
+
+s, d = call(gest, "GET", "/stats/pedagogique")
+check("analytics pédagogiques (gestion)", s == 200 and "enrollmentsByMonth" in d)
 
 # ── Sessions présentielles ───────────────────────────────────────────
 from datetime import datetime, timedelta, timezone
 start = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
 end = (datetime.now(timezone.utc) + timedelta(days=7, hours=6)).isoformat()
-s, d = call(staff, "POST", "/sessions", {"formationId": fid, "title": "Journée Delta", "startAt": start, "endAt": end, "capacity": 1})
-check("créer session présentielle", s == 201)
+s, d = call(trainer, "POST", "/sessions", {"formationId": fid, "title": "Journée Test", "startAt": start, "endAt": end, "capacity": 1})
+check("formateur crée une session (formateur = lui)", s == 201 and d["session"]["trainer"]["name"] == "Nina Formatrice", str(d))
 sesid = d["session"]["id"]
 
-s, d = call(staff, "POST", f"/sessions/{sesid}/participants", {"userIds": [uid]})
+s, d = call(trainer, "POST", f"/sessions/{sesid}/participants", {"userIds": [learner_uid]})
 check("inscrire participant", s == 201)
 
-s, d = call(staff, "POST", f"/sessions/{sesid}/participants", {"userIds": ["x"] if False else [uid]})
-check("capacité respectée", s in (400, 201))
+s, d = call(trainer, "POST", f"/sessions/{sesid}/participants", {"userIds": [learner2_uid]})
+check("capacité respectée (2e participant refusé)", s == 400, str(d))
 
-s, d = call(paul, "GET", "/me/sessions")
-check("portail: mes sessions", s == 200 and len(d["sessions"]) == 1 and d["sessions"][0]["title"] == "Journée Delta")
+s, d = call(learner, "GET", "/me/sessions")
+check("portail: mes sessions", s == 200 and len(d["sessions"]) == 1 and d["sessions"][0]["title"] == "Journée Test")
 
-s, d = call(staff, "PATCH", f"/sessions/{sesid}/participants/{uid}", {"attended": True})
+s, d = call(trainer, "PATCH", f"/sessions/{sesid}/participants/{learner_uid}", {"attended": True})
 check("marquer présence", s == 200 and d["participant"]["attended"] is True)
+
+# Le formateur seed ne gère pas cette session (autre formation)
+s, d = call(seed_trainer, "DELETE", f"/sessions/{sesid}")
+check("formateur étranger bloqué sur la session (403)", s == 403)
 
 # ── Récap ────────────────────────────────────────────────────────────
 passed = sum(1 for _, ok, _ in results if ok)

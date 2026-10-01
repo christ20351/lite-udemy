@@ -6,32 +6,21 @@ import Donut from "@/components/Donut";
 import { api } from "@/lib/api";
 
 type Analytics = {
-  revenueByMonth: Record<string, number>;
-  funnel: Record<string, number>;
-  pipelineByStage: Record<string, number>;
+  enrollmentsByMonth: Record<string, number>;
+  selfEnrolled: number;
+  grantedEnrollments: number;
+  activeLearners30d: number;
   topFormations: Array<{ id: string; title: string; learners: number; avgCompletion: number }>;
   quizAverages: Array<{ id: string; title: string; avgScore: number; attempts: number }>;
 };
 
 const MONTH_LABELS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
 
-const STAGE_LABELS: Record<string, { label: string; color: string }> = {
-  NEW: { label: "Contact", color: "#94a3b8" },
-  QUALIFIED: { label: "Qualifié", color: "#0ea5e9" },
-  QUOTE: { label: "Devis envoyé", color: "#f59e0b" },
-  NEGOTIATION: { label: "Négociation", color: "#8b5cf6" },
-  WON: { label: "Gagné", color: "#10b981" },
-  LOST: { label: "Perdu", color: "#ef4444" },
-};
-
-const eur = (v: number) =>
-  v.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
-
 export default function AnalyticsPage() {
   const [data, setData] = useState<Analytics | null>(null);
 
   useEffect(() => {
-    api("/stats/commercial")
+    api("/stats/pedagogique")
       .then((d) => setData(d))
       .catch(() => setData(null));
   }, []);
@@ -44,80 +33,63 @@ export default function AnalyticsPage() {
     );
   }
 
-  const revenue = Object.entries(data.revenueByMonth).map(([key, value]) => {
+  const monthly = Object.entries(data.enrollmentsByMonth).map(([key, value]) => {
     const [, m] = key.split("-");
     return { label: MONTH_LABELS[Number(m) - 1] ?? key, value };
   });
-  const totalWon = Object.values(data.revenueByMonth).reduce((a, b) => a + b, 0);
+  const totalEnrollments = Object.values(data.enrollmentsByMonth).reduce((a, b) => a + b, 0);
 
-  const funnelSegments = Object.entries(STAGE_LABELS).map(([k, v]) => ({
-    label: v.label,
-    value: data.funnel[k] ?? 0,
-    color: v.color,
-  }));
-
-  const maxFunnel = Math.max(...funnelSegments.map((s) => s.value), 1);
+  const originSegments = [
+    { label: "Auto-inscriptions", value: data.selfEnrolled, color: "#4f46e5" },
+    { label: "Inscrits par l'équipe", value: data.grantedEnrollments, color: "#818cf8" },
+  ];
 
   return (
     <div className="space-y-6 p-8">
       <div>
-        <h1 className="text-2xl font-bold text-fg">Analytics commerciales</h1>
+        <h1 className="text-2xl font-bold text-fg">Analytics pédagogiques</h1>
         <p className="mt-1 text-sm text-muted">
-          Revenus, conversion et engagement — mis à jour en temps réel.
+          Inscriptions, progression et réussite — mis à jour en temps réel.
         </p>
       </div>
 
-      {/* CA sur 6 mois */}
+      {/* Inscriptions sur 6 mois */}
       <div className="card p-5">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
-            Chiffre d&apos;affaires gagné — 6 derniers mois
+            Inscriptions — 6 derniers mois
           </h3>
-          <span className="text-xl font-bold text-emerald-500">{eur(totalWon)}</span>
+          <span className="text-xl font-bold text-primary">{totalEnrollments}</span>
         </div>
-        <BarChart
-          data={revenue}
-          format={(v) => `${(v / 1000).toFixed(v >= 1000 ? 1 : 0)}k€`}
-          color="#10b981"
-          height={200}
-        />
+        <BarChart data={monthly} color="#4f46e5" height={200} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {/* Entonnoir */}
+        {/* Origine des inscriptions + engagement */}
         <div className="card p-5">
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">
-            Entonnoir du pipeline
+            Origine des inscriptions
           </h3>
-          <div className="space-y-2.5">
-            {funnelSegments.map((s) => (
-              <div key={s.label}>
-                <div className="mb-1 flex items-center justify-between text-xs">
-                  <span className="text-fg-soft">{s.label}</span>
-                  <span className="font-semibold text-fg">{s.value}</span>
-                </div>
-                <div className="h-2.5 overflow-hidden rounded-full bg-surface-2">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{ width: `${(s.value / maxFunnel) * 100}%`, backgroundColor: s.color }}
-                  />
-                </div>
+          <Donut
+            size={130}
+            segments={originSegments}
+            centerLabel={String(data.selfEnrolled + data.grantedEnrollments)}
+            centerSub="inscriptions"
+          />
+          <div className="mt-5 space-y-2 border-t border-line pt-4">
+            {originSegments.map((s) => (
+              <div key={s.label} className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2 text-fg-soft">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                  {s.label}
+                </span>
+                <span className="font-semibold text-fg">{s.value}</span>
               </div>
             ))}
-          </div>
-          <div className="mt-5 border-t border-line pt-4">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-              CA prévisionnel par étape
-            </p>
-            <Donut
-              size={110}
-              thickness={14}
-              segments={funnelSegments.filter((s) => s.value > 0)}
-              centerLabel={eur(
-                Object.values(data.pipelineByStage).reduce((a, b) => a + b, 0)
-              ).replace("€", "").trim()}
-              centerSub="€ en jeu"
-            />
+            <div className="flex items-center justify-between border-t border-line pt-3 text-sm">
+              <span className="text-fg-soft">Apprenants actifs (30 j)</span>
+              <span className="font-semibold text-primary">{data.activeLearners30d}</span>
+            </div>
           </div>
         </div>
 
@@ -143,7 +115,7 @@ export default function AnalyticsPage() {
                 <div className="flex items-center gap-2">
                   <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
                     <div
-                      className="h-full rounded-full bg-emerald-500"
+                      className="h-full rounded-full bg-indigo-500"
                       style={{ width: `${f.avgCompletion}%` }}
                     />
                   </div>
@@ -171,7 +143,7 @@ export default function AnalyticsPage() {
                   size={70}
                   thickness={9}
                   segments={[
-                    { label: "", value: q.avgScore, color: q.avgScore >= 70 ? "#10b981" : "#f59e0b" },
+                    { label: "", value: q.avgScore, color: q.avgScore >= 70 ? "#4f46e5" : "#818cf8" },
                     { label: "", value: 100 - q.avgScore, color: "#94a3b8" },
                   ]}
                   centerLabel={`${q.avgScore}%`}

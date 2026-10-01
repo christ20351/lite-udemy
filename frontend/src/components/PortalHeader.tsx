@@ -16,28 +16,44 @@ export default function PortalHeader() {
   const router = useRouter();
   const pathname = usePathname();
 
+  const initials = (user?.name ?? "?")
+    .split(" ")
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
   return (
-    <header className="sticky top-0 z-10 border-b border-line bg-surface/85 backdrop-blur">
-      <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-3">
-        <div className="flex items-center gap-5">
-          <Link href="/mes-formations" className="text-sm font-bold text-fg">
-            Lite{" "}
-            <span className="bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent">
-              Academy
-            </span>
+    <header className="sticky top-0 z-10 border-b border-line bg-surface/80 backdrop-blur-md">
+      {/* Liseré dégradé en haut de page */}
+      <div
+        aria-hidden
+        className="h-0.5 w-full"
+        style={{ background: "linear-gradient(90deg, #6366f1, #a855f7, #ec4899)" }}
+      />
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
+        <div className="flex items-center gap-6">
+          <Link href="/mes-formations" className="text-base font-black tracking-tight">
+            <span className="gradient-text">Lora</span>
+            <span className="text-fg">One</span>
           </Link>
-          <nav className="flex items-center gap-4">
+          <nav className="flex items-center gap-1.5">
             {PORTAL_NAV.map((item) => {
               const active = pathname.startsWith(item.href);
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`text-sm transition-colors ${
+                  className={
                     active
-                      ? "font-semibold text-primary"
-                      : "text-muted hover:text-fg"
-                  }`}
+                      ? "rounded-full px-3.5 py-1.5 text-sm font-bold text-white shadow-md shadow-indigo-500/30 transition-colors"
+                      : "rounded-full px-3.5 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+                  }
+                  style={
+                    active
+                      ? { background: "linear-gradient(120deg, #6366f1, #a855f7)" }
+                      : undefined
+                  }
                 >
                   {item.label}
                 </Link>
@@ -46,11 +62,13 @@ export default function PortalHeader() {
           </nav>
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <span className="hidden text-muted sm:inline">
-            {user?.name}
-            {user?.client ? (
-              <span className="text-faint"> · {user.client.name}</span>
-            ) : null}
+          <span className="hidden text-muted sm:inline">{user?.name}</span>
+          <span
+            className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white"
+            style={{ background: "linear-gradient(135deg, #6366f1, #ec4899)" }}
+            title={user?.email}
+          >
+            {initials}
           </span>
           <ThemeToggle />
           <button
@@ -58,7 +76,7 @@ export default function PortalHeader() {
               await logout();
               router.replace("/login");
             }}
-            className="text-xs text-muted underline-offset-2 hover:text-red-500 hover:underline"
+            className="text-xs text-muted underline-offset-2 hover:text-fg hover:underline"
           >
             Déconnexion
           </button>
@@ -67,4 +85,3 @@ export default function PortalHeader() {
     </header>
   );
 }
-

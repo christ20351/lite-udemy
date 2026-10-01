@@ -1,52 +1,56 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
-import { requireAuth, requireStaff } from '../lib/auth.js';
+import { requireAuth, requireGestion } from '../lib/auth.js';
 
 export const statsRouter = Router();
-statsRouter.use(requireAuth, requireStaff);
+statsRouter.use(requireAuth, requireGestion);
 
-// Tableau de bord staff : toutes les agrégations en un appel
+// Tableau de bord : toutes les agrégations en un appel
 statsRouter.get('/dashboard', async (_req, res) => {
   const now = new Date();
+  const d30 = new Date(Date.now() - 30 * 24 * 3600 * 1000);
 
   const [
-    clientsByStatus,
-    contactsTotal,
+    learnersTotal,
     formationsByStatus,
     formationsByMode,
     lessonsTotal,
     lessonsWithVideo,
-    subsByStatus,
-    subsSeats,
-    accessesTotal,
+    enrollmentsTotal,
+    enrollments30d,
     sessionsUpcoming,
     sessionsPast,
     participantsTotal,
     participantsAttended,
     completedLessons,
-    recentInteractions,
+    activeLearners,
+    recentEnrollments,
     recentFormations,
   ] = await Promise.all([
-    prisma.client.groupBy({ by: ['status'], _count: { _all: true } }),
-    prisma.user.count({ where: { role: 'CONTACT' } }),
+    prisma.user.count({ where: { role: 'APPRENANT' } }),
     prisma.formation.groupBy({ by: ['status'], _count: { _all: true } }),
     prisma.formation.groupBy({ by: ['mode'], _count: { _all: true } }),
     prisma.lesson.count(),
     prisma.lesson.count({ where: { videoPath: { not: null } } }),
-    prisma.subscription.groupBy({ by: ['status'], _count: { _all: true } }),
-    prisma.subscription.aggregate({ _sum: { seats: true } }),
-    prisma.access.count(),
+    prisma.enrollment.count(),
+    prisma.enrollment.count({ where: { grantedAt: { gte: d30 } } }),
     prisma.session.count({ where: { endAt: { gte: now } } }),
     prisma.session.count({ where: { endAt: { lt: now } } }),
     prisma.sessionParticipant.count(),
     prisma.sessionParticipant.count({ where: { attended: true } }),
     prisma.lessonProgress.count({ where: { completed: true } }),
-    prisma.interaction.findMany({
+    prisma.lessonProgress.findMany({
+      where: { updatedAt: { gte: d30 } },
+      distinct: ['userId'],
+      select: { userId: true },
+    }),
+    prisma.enrollment.findMany({
       take: 5,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { grantedAt: 'desc' },
       include: {
-        client: { select: { id: true, name: true } },
-        author: { select: { name: true } },
+        user: { select: { id: true, name: true } },
+        formation: { select: { id: true, title: true } },
+        grantedBy: { select: { name: true } },
       },
     }),
     prisma.formation.findMany({
@@ -54,7 +58,7 @@ statsRouter.get('/dashboard', async (_req, res) => {
       orderBy: { createdAt: 'desc' },
       select: {
         id: true, title: true, status: true, mode: true, createdAt: true,
-        _count: { select: { sections: true, accesses: true } },
+        _count: { select: { sections: true, enrollments: true } },
       },
     }),
   ]);
@@ -66,22 +70,15 @@ statsRouter.get('/dashboard', async (_req, res) => {
     Object.values(obj).reduce((a, b) => a + b, 0);
 
   res.json({
-    clients: {
-      total: sumValues(byKey(clientsByStatus, 'status')),
-      byStatus: byKey(clientsByStatus, 'status'),
-    },
-    contactsTotal,
+    learnersTotal,
     formations: {
       total: sumValues(byKey(formationsByStatus, 'status')),
       byStatus: byKey(formationsByStatus, 'status'),
       byMode: byKey(formationsByMode, 'mode'),
     },
     lessons: { total: lessonsTotal, withVideo: lessonsWithVideo },
-    subscriptions: {
-      byStatus: byKey(subsByStatus, 'status'),
-      seatsTotal: subsSeats._sum.seats ?? 0,
-    },
-    accessesTotal,
+    enrollments: { total: enrollmentsTotal, last30d: enrollments30d },
+    activeLearners30d: activeLearners.length,
     sessions: {
       upcoming: sessionsUpcoming,
       past: sessionsPast,
@@ -89,50 +86,50 @@ statsRouter.get('/dashboard', async (_req, res) => {
       participantsAttended,
     },
     completedLessons,
-    recentInteractions,
+    recentEnrollments: recentEnrollments.map((e) => ({
+      id: e.id,
+      grantedAt: e.grantedAt,
+      selfEnrolled: e.grantedById === null,
+      learner: e.user,
+      formation: e.formation,
+      grantedByName: e.grantedBy?.name ?? null,
+    })),
     recentFormations,
   });
 });
 
-// ── Analytics commerciales ────────────────────────────────────────────
+// ── Analytics pédagogiques ────────────────────────────────────────────
 
-/** CA gagné par mois (deals WON, 6 derniers mois) */
-statsRouter.get('/commercial', async (_req, res) => {
+statsRouter.get('/pedagogique', async (_req, res) => {
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
   sixMonthsAgo.setDate(1);
   sixMonthsAgo.setHours(0, 0, 0, 0);
+  const d30 = new Date(Date.now() - 30 * 24 * 3600 * 1000);
 
-  const wonDeals = await prisma.deal.findMany({
-    where: { stage: 'WON', updatedAt: { gte: sixMonthsAgo } },
-    select: { amount: true, updatedAt: true },
+  // Inscriptions par mois (6 derniers mois)
+  const enrollments = await prisma.enrollment.findMany({
+    where: { grantedAt: { gte: sixMonthsAgo } },
+    select: { grantedAt: true, grantedById: true },
   });
-
-  // CA par mois (clé "YYYY-MM")
-  const revenueByMonth: Record<string, number> = {};
+  const enrollmentsByMonth: Record<string, number> = {};
   for (let i = 5; i >= 0; i--) {
     const d = new Date();
     d.setMonth(d.getMonth() - i);
-    revenueByMonth[`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`] = 0;
+    enrollmentsByMonth[`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`] = 0;
   }
-  for (const d of wonDeals) {
-    const dt = d.updatedAt;
-    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
-    if (key in revenueByMonth) revenueByMonth[key] += d.amount ?? 0;
+  for (const e of enrollments) {
+    const key = `${e.grantedAt.getFullYear()}-${String(e.grantedAt.getMonth() + 1).padStart(2, '0')}`;
+    if (key in enrollmentsByMonth) enrollmentsByMonth[key] += 1;
   }
+  const selfEnrolled = enrollments.filter((e) => e.grantedById === null).length;
 
-  // Entonnoir : deals par étape
-  const funnel = await prisma.deal.groupBy({ by: ['stage'], _count: { _all: true } });
-  const funnelByStage = Object.fromEntries(
-    funnel.map((f) => [f.stage, f._count._all])
-  );
-
-  // Top formations par accès + complétion moyenne
+  // Top formations : inscrits + complétion moyenne
   const formations = await prisma.formation.findMany({
     where: { status: 'PUBLISHED' },
     select: {
       id: true, title: true,
-      _count: { select: { accesses: true, sections: true } },
+      _count: { select: { enrollments: true, sections: true } },
       sections: { include: { lessons: { select: { id: true } } } },
     },
   });
@@ -147,9 +144,9 @@ statsRouter.get('/commercial', async (_req, res) => {
     topFormations.push({
       id: f.id,
       title: f.title,
-      learners: f._count.accesses,
+      learners: f._count.enrollments,
       avgCompletion: lessonIds.length
-        ? Math.round((completed / (lessonIds.length * Math.max(f._count.accesses, 1))) * 100)
+        ? Math.round((completed / (lessonIds.length * Math.max(f._count.enrollments, 1))) * 100)
         : 0,
     });
   }
@@ -176,16 +173,18 @@ statsRouter.get('/commercial', async (_req, res) => {
     attempts: v.scores.length,
   }));
 
-  // Pipeline global
-  const pipeline = await prisma.deal.groupBy({ by: ['stage'], _sum: { amount: true } });
-  const pipelineByStage = Object.fromEntries(
-    pipeline.map((p) => [p.stage, p._sum.amount ?? 0])
-  );
+  // Engagement : apprenants actifs sur 30 jours
+  const activeLearners = await prisma.lessonProgress.findMany({
+    where: { updatedAt: { gte: d30 } },
+    distinct: ['userId'],
+    select: { userId: true },
+  });
 
   res.json({
-    revenueByMonth,
-    funnel: funnelByStage,
-    pipelineByStage,
+    enrollmentsByMonth,
+    selfEnrolled,
+    grantedEnrollments: enrollments.length - selfEnrolled,
+    activeLearners30d: activeLearners.length,
     topFormations: topFormations.slice(0, 5),
     quizAverages,
   });

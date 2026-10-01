@@ -28,6 +28,12 @@ staff = client()
 call(staff, "POST", "/auth/login", {"email": "admin@liteudemy.local", "password": "admin123"})
 
 # 1. Upload de la vidéo (multipart via curl, plus simple)
+subprocess.run(
+    ["curl", "-s", "-c", "/tmp/admin-cookies.txt", "-X", "POST", f"{BASE}/auth/login",
+     "-H", "Content-Type: application/json",
+     "-d", '{"email":"admin@liteudemy.local","password":"admin123"}'],
+    capture_output=True, text=True,
+)
 out = subprocess.run(
     ["curl", "-s", "-b", "/tmp/admin-cookies.txt", "-X", "POST", f"{BASE}/uploads/video", "-F", "video=@/tmp/test-video.mp4"],
     capture_output=True, text=True,
@@ -62,13 +68,13 @@ def range_probe(op, name, expected):
 
 anon = client()
 jean = client()
-call(jean, "POST", "/auth/login", {"email": "jean@acme.example", "password": "demo123"})
+call(jean, "POST", "/auth/login", {"email": "jean@example.fr", "password": "demo123"})
 lea = client()
-call(lea, "POST", "/auth/login", {"email": "lea@acme.example", "password": "demo123"})
+call(lea, "POST", "/auth/login", {"email": "lea@example.fr", "password": "demo123"})
 
 results = [
     range_probe(anon, "anonyme → refusé (401 attendu)", 401),
-    range_probe(staff, "staff → streaming (206 attendu)", 206),
+    range_probe(staff, "équipe → streaming (206 attendu)", 206),
     range_probe(jean, "jean (accès Python) → 206 attendu", 206),
     range_probe(lea, "lea (accès Python) → 206 attendu", 206),
 ]

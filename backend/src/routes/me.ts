@@ -1,14 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { requireAuth } from '../lib/auth.js';
+import { requireAuth, isEquipe } from '../lib/auth.js';
 
 export const meRouter = Router();
 meRouter.use(requireAuth);
 
 // Synthèse du tableau de bord apprenant
 meRouter.get('/overview', async (req, res) => {
-  const accesses = await prisma.access.findMany({
+  const accesses = await prisma.enrollment.findMany({
     where: { userId: req.user!.id },
     include: {
       formation: {
@@ -101,7 +101,7 @@ meRouter.get('/overview', async (req, res) => {
 });
 
 async function hasAccess(userId: string, formationId: string) {
-  const access = await prisma.access.findUnique({
+  const access = await prisma.enrollment.findUnique({
     where: { userId_formationId: { userId, formationId } },
   });
   return Boolean(access);
@@ -109,7 +109,7 @@ async function hasAccess(userId: string, formationId: string) {
 
 // Mes formations (filtrées par accès) + pourcentage de progression
 meRouter.get('/formations', async (req, res) => {
-  const accesses = await prisma.access.findMany({
+  const accesses = await prisma.enrollment.findMany({
     where: { userId: req.user!.id },
     include: {
       formation: {
@@ -215,10 +215,68 @@ meRouter.get('/formations/:slug', async (req, res) => {
   });
 });
 
+// Clôturer une formation : possible uniquement depuis la dernière leçon,
+// et seulement si toutes les leçons précédentes sont réellement terminées.
+meRouter.post('/formations/:slug/complete', async (req, res) => {
+  const formation = await prisma.formation.findUnique({
+    where: { slug: req.params.slug },
+    include: {
+      sections: {
+        orderBy: { position: 'asc' },
+        include: { lessons: { orderBy: { position: 'asc' }, select: { id: true } } },
+      },
+    },
+  });
+  if (!formation) return res.status(404).json({ error: 'Formation introuvable' });
+  if (formation.status !== 'PUBLISHED') {
+    return res.status(403).json({ error: 'Formation non publiée' });
+  }
+  if (!isEquipe(req.user!.role) && !(await hasAccess(req.user!.id, formation.id))) {
+    return res.status(403).json({ error: "Vous n'avez pas accès à cette formation" });
+  }
+
+  const lessonIds = formation.sections.flatMap((s) => s.lessons.map((l) => l.id));
+  if (lessonIds.length === 0) {
+    return res.status(400).json({ error: 'Cette formation ne contient aucune leçon' });
+  }
+
+  const others = lessonIds.slice(0, -1);
+  const doneOthers = others.length
+    ? await prisma.lessonProgress.count({
+        where: { userId: req.user!.id, lessonId: { in: others }, completed: true },
+      })
+    : 0;
+  if (doneOthers < others.length) {
+    return res.status(409).json({
+      error: `Impossible de terminer la formation : ${others.length - doneOthers} leçon(s) restante(s) à terminer.`,
+    });
+  }
+
+  // Toutes les leçons précédentes sont terminées : on clôture la dernière.
+  const lastLessonId = lessonIds[lessonIds.length - 1];
+  await prisma.lessonProgress.upsert({
+    where: { userId_lessonId: { userId: req.user!.id, lessonId: lastLessonId } },
+    update: { completed: true, updatedAt: new Date() },
+    create: { userId: req.user!.id, lessonId: lastLessonId, completed: true, lastPosition: 0 },
+  });
+
+  await prisma.notification.create({
+    data: {
+      userId: req.user!.id,
+      type: 'FORMATION_COMPLETED',
+      title: 'Formation terminée 🎉',
+      body: `Bravo, vous avez terminé « ${formation.title} » !`,
+      link: '/mes-formations',
+    },
+  });
+
+  res.json({ ok: true, formation: { slug: formation.slug, title: formation.title } });
+});
+
 // Contenu d'une leçon (protégé) + position de reprise
 meRouter.get('/lessons/:lessonId', async (req, res) => {
   const lesson = await prisma.lesson.findUnique({
-    where: { id: req.params.lessonId },
+    where: { id: (req.params.lessonId as string) },
     include: {
       section: {
         include: { formation: { select: { id: true, title: true, slug: true, status: true } } },
@@ -232,7 +290,7 @@ meRouter.get('/lessons/:lessonId', async (req, res) => {
     return res.status(403).json({ error: 'Formation non publiée' });
   }
   // Staff : accès complet. Contact : accès requis (ou leçon preview).
-  if (req.user!.role !== 'STAFF') {
+  if (!isEquipe(req.user!.role)) {
     const allowed = lesson.isPreview || (await hasAccess(req.user!.id, formation.id));
     if (!allowed) return res.status(403).json({ error: "Vous n'avez pas accès à cette leçon" });
   }
@@ -253,6 +311,14 @@ meRouter.get('/lessons/:lessonId', async (req, res) => {
     where: { userId_lessonId: { userId: req.user!.id, lessonId: lesson.id } },
   });
 
+  // Progression globale de la formation (pour autoriser la clôture)
+  const totalLessons = siblings.length;
+  const completedLessons = totalLessons
+    ? await prisma.lessonProgress.count({
+        where: { userId: req.user!.id, lessonId: { in: siblings.map((l) => l.id) }, completed: true },
+      })
+    : 0;
+
   res.json({
     lesson: {
       id: lesson.id,
@@ -267,6 +333,8 @@ meRouter.get('/lessons/:lessonId', async (req, res) => {
     formation: { id: formation.id, title: formation.title, slug: formation.slug },
     lastPosition: progress?.lastPosition ?? 0,
     completed: progress?.completed ?? false,
+    isLast: totalLessons > 0 && idx === totalLessons - 1,
+    formationProgress: { totalLessons, completedLessons },
     bestQuizScore: bestAttempt ? { score: bestAttempt.score, total: bestAttempt.total } : null,
     prev: idx > 0 ? siblings[idx - 1] : null,
     next: idx < siblings.length - 1 ? siblings[idx + 1] : null,
@@ -283,14 +351,14 @@ meRouter.put('/lessons/:lessonId/progress', async (req, res) => {
   const parsed = progressSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Données invalides' });
   const lesson = await prisma.lesson.findUnique({
-    where: { id: req.params.lessonId },
+    where: { id: (req.params.lessonId as string) },
     include: { section: { include: { formation: { select: { id: true, status: true } } } } },
   });
   if (!lesson) return res.status(404).json({ error: 'Leçon introuvable' });
   if (lesson.section.formation.status !== 'PUBLISHED') {
     return res.status(403).json({ error: 'Formation non publiée' });
   }
-  if (req.user!.role !== 'STAFF' && !(await hasAccess(req.user!.id, lesson.section.formationId))) {
+  if (!isEquipe(req.user!.role) && !(await hasAccess(req.user!.id, lesson.section.formationId))) {
     return res.status(403).json({ error: "Vous n'avez pas accès à cette formation" });
   }
 
@@ -337,4 +405,40 @@ meRouter.get('/sessions', async (req, res) => {
     }))
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
   res.json({ sessions });
+});
+
+// ── Notifications internes ────────────────────────────────────────────
+
+meRouter.get('/notifications', async (req, res) => {
+  const [notifications, unread] = await Promise.all([
+    prisma.notification.findMany({
+      where: { userId: req.user!.id },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    }),
+    prisma.notification.count({ where: { userId: req.user!.id, read: false } }),
+  ]);
+  res.json({ notifications, unread });
+});
+
+meRouter.patch('/notifications/:id/read', async (req, res) => {
+  const notification = await prisma.notification.findUnique({
+    where: { id: (req.params.id as string) },
+  });
+  if (!notification || notification.userId !== req.user!.id) {
+    return res.status(404).json({ error: 'Notification introuvable' });
+  }
+  const updated = await prisma.notification.update({
+    where: { id: notification.id },
+    data: { read: true },
+  });
+  res.json({ notification: updated });
+});
+
+meRouter.post('/notifications/read-all', async (req, res) => {
+  await prisma.notification.updateMany({
+    where: { userId: req.user!.id, read: false },
+    data: { read: true },
+  });
+  res.json({ ok: true });
 });

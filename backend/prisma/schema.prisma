@@ -10,20 +10,10 @@ datasource db {
 // ─── Enums ────────────────────────────────────────────────────────────
 
 enum Role {
-  STAFF // équipe interne : admin / commercial / formateur
-  CONTACT // apprenant rattaché à un client, accès au portail
-}
-
-enum ClientType {
-  COMPANY
-  INDIVIDUAL
-}
-
-enum ClientStatus {
-  LEAD
-  PROSPECT
-  CLIENT
-  INACTIVE
+  ADMIN // gère l'équipe et tout le back-office
+  GESTIONNAIRE // crée les formations, assigne les formateurs, publie
+  FORMATEUR // construit le contenu des formations qui lui sont assignées
+  APPRENANT // portail : catalogue, mes formations, sessions
 }
 
 enum FormationMode {
@@ -37,88 +27,32 @@ enum FormationStatus {
   PUBLISHED
 }
 
-enum InteractionType {
-  CALL
-  EMAIL
-  MEETING
-  NOTE
-}
-
-enum SubscriptionStatus {
-  ACTIVE
-  EXPIRED
-}
-
-enum DealStage {
-  NEW
-  QUALIFIED
-  QUOTE
-  NEGOTIATION
-  WON
-  LOST
-}
-
 enum SessionModality {
   PRESENTIEL
   ONLINE
 }
 
-// ─── CRM ──────────────────────────────────────────────────────────────
+// ─── Utilisateurs ─────────────────────────────────────────────────────
 
-/// Utilisateur de l'application : soit le staff interne, soit un
-/// contact apprenant (rattaché à un Client, role = CONTACT).
+/// Un compte = une personne avec un rôle unique : membre de l'équipe
+/// (ADMIN / GESTIONNAIRE / FORMATEUR) ou apprenant (APPRENANT).
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
   passwordHash String
   name         String
-  role         Role     @default(CONTACT)
-  clientId     String?
-  client       Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  role         Role     @default(APPRENANT)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  interactions    Interaction[]        @relation("InteractionAuthor")
-  grantedAccesses Access[]             @relation("AccessGranter")
-  accesses        Access[]
+  grantedAccesses Enrollment[]         @relation("EnrollmentGranter")
+  enrollments     Enrollment[]
   progresses      LessonProgress[]
   sessionsTrained Session[]            @relation("SessionTrainer")
   participations  SessionParticipant[]
-  dealsOwned      Deal[]               @relation("DealOwner")
+  formationsTaught Formation[]         @relation("FormationInstructors")
   quizAttempts    QuizAttempt[]
-
-  @@index([clientId])
-}
-
-model Client {
-  id        String       @id @default(cuid())
-  name      String
-  type      ClientType   @default(COMPANY)
-  status    ClientStatus @default(LEAD)
-  email     String?
-  phone     String?
-  address   String?
-  notes     String?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-
-  users         User[]
-  subscriptions Subscription[]
-  interactions  Interaction[]
-  deals         Deal[]
-}
-
-model Interaction {
-  id       String          @id @default(cuid())
-  clientId String
-  client   Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  authorId String?
-  author   User?           @relation("InteractionAuthor", fields: [authorId], references: [id])
-  type     InteractionType @default(NOTE)
-  content  String
-  createdAt DateTime       @default(now())
-
-  @@index([clientId])
+  notifications   Notification[]
 }
 
 // ─── Catalogue formations ─────────────────────────────────────────────
@@ -137,11 +71,10 @@ model Formation {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
-  sections      Section[]
-  sessions      Session[]
-  subscriptions Subscription[]
-  accesses      Access[]
-  deals         Deal[]
+  instructors User[]            @relation("FormationInstructors")
+  sections    Section[]
+  sessions    Session[]
+  enrollments Enrollment[]
 }
 
 model Section {
@@ -170,39 +103,27 @@ model Lesson {
   position  Int     @default(0)
   isPreview Boolean @default(false)
 
-  progresses LessonProgress[]
-  quiz       Quiz?
+  progresses   LessonProgress[]
+  quiz         Quiz?
   quizAttempts QuizAttempt[]
 
   @@index([sectionId])
 }
 
-// ─── Souscriptions & accès ────────────────────────────────────────────
+// ─── Inscriptions ─────────────────────────────────────────────────────
 
-/// Le contrat : un Client souscrit à une Formation (nb de places).
-model Subscription {
-  id          String             @id @default(cuid())
-  clientId    String
-  client      Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  formationId String
-  formation   Formation          @relation(fields: [formationId], references: [id], onDelete: Cascade)
-  status      SubscriptionStatus @default(ACTIVE)
-  seats       Int                @default(1)
-  startedAt   DateTime           @default(now())
-  endsAt      DateTime?
-
-  @@unique([clientId, formationId])
-}
-
-/// Le droit effectif : un contact précis peut suivre une formation.
-model Access {
+/// L'inscription directe d'un apprenant à une formation : créée en
+/// auto-inscription (formation gratuite) ou accordée par l'équipe
+/// (formation payante payée hors ligne, en attendant le paiement en ligne).
+model Enrollment {
   id          String    @id @default(cuid())
   userId      String
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   formationId String
   formation   Formation @relation(fields: [formationId], references: [id], onDelete: Cascade)
+  /// null = auto-inscription de l'apprenant
   grantedById String?
-  grantedBy   User?     @relation("AccessGranter", fields: [grantedById], references: [id])
+  grantedBy   User?     @relation("EnrollmentGranter", fields: [grantedById], references: [id])
   grantedAt   DateTime  @default(now())
 
   @@unique([userId, formationId])
@@ -256,24 +177,23 @@ model SessionParticipant {
   @@unique([sessionId, userId])
 }
 
-// ─── Pipeline commercial ──────────────────────────────────────────────
+// ─── Notifications internes ───────────────────────────────────────────
 
-model Deal {
-  id          String    @id @default(cuid())
-  title       String
-  stage       DealStage @default(NEW)
-  amount      Float?
-  clientId    String?
-  client      Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  formationId String?
-  formation   Formation? @relation(fields: [formationId], references: [id], onDelete: SetNull)
-  ownerId     String?
-  owner       User?     @relation("DealOwner", fields: [ownerId], references: [id])
-  notes       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+/// Message interne adressé à un membre de l'équipe (ex : formateur
+/// prévenu d'une nouvelle formation assignée).
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String // ex : FORMATION_ASSIGNED
+  title     String
+  body      String?
+  /// Chemin frontend vers la ressource concernée
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
 
-  @@index([stage])
+  @@index([userId, read])
 }
 
 // ─── Quiz ─────────────────────────────────────────────────────────────

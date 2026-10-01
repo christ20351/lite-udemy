@@ -8,7 +8,8 @@ export type DonutSegment = {
 
 /**
  * Diagramme circulaire (donut) en SVG pur — aucune dépendance.
- * Texte central superposé + légende à droite avec points colorés.
+ * Texte central superposé (taille auto-ajustée pour tenir dans l'anneau)
+ * + légende à droite avec points colorés.
  */
 export default function Donut({
   segments,
@@ -27,6 +28,17 @@ export default function Donut({
   const r = (size - thickness) / 2;
   const c = 2 * Math.PI * r;
   const cx = size / 2;
+
+  const label = centerLabel !== undefined ? String(centerLabel) : String(total);
+  // Auto-ajustement : la police rétrécit quand le libellé est long ou le
+  // donut petit, pour ne jamais déborder sur l'anneau.
+  const rInner = r - thickness / 2;
+  const usableWidth = 1.5 * rInner; // corde praticable au centre du cercle
+  const centerFontSize = Math.max(
+    9,
+    Math.min(size * 0.22, (usableWidth * 1.8) / Math.max(label.length, 1))
+  );
+  const subFontSize = Math.max(8, Math.min(11, size * 0.09));
 
   let offset = 0;
 
@@ -72,10 +84,20 @@ export default function Donut({
                 return el;
               })}
         </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-2xl font-bold text-fg">{centerLabel ?? total}</span>
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-1 text-center">
+          <span
+            className="font-bold leading-none text-fg tabular-nums"
+            style={{ fontSize: `${centerFontSize}px` }}
+          >
+            {label}
+          </span>
           {centerSub && (
-            <span className="text-[11px] font-medium text-muted">{centerSub}</span>
+            <span
+              className="mt-0.5 font-medium leading-tight text-muted"
+              style={{ fontSize: `${subFontSize}px` }}
+            >
+              {centerSub}
+            </span>
           )}
         </div>
       </div>

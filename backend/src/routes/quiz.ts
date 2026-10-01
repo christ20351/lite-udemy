@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { requireAuth, requireStaff } from '../lib/auth.js';
+import { requireAuth, isEquipe, canManageLesson } from '../lib/auth.js';
 
 export const quizStaffRouter = Router();
 export const quizLearnerRouter = Router();
 
-quizStaffRouter.use(requireAuth, requireStaff);
+quizStaffRouter.use(requireAuth);
 
 const questionSchema = z.object({
   text: z.string().min(1),
@@ -21,13 +21,17 @@ const quizSchema = z.object({
   questions: z.array(questionSchema).min(1).max(20),
 });
 
-/** Sauvegarde complète du quiz d'une leçon (remplace tout) */
+/** Sauvegarde complète du quiz d'une leçon (remplace tout).
+ *  Un formateur ne peut modifier que les quiz de ses formations. */
 quizStaffRouter.put('/lessons/:lessonId/quiz', async (req, res) => {
   const parsed = quizSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Au moins une question avec 2+ choix requise' });
   }
-  const lesson = await prisma.lesson.findUnique({ where: { id: req.params.lessonId } });
+  if (!(await canManageLesson(req.user!, (req.params.lessonId as string)))) {
+    return res.status(403).json({ error: 'Formation non assignée' });
+  }
+  const lesson = await prisma.lesson.findUnique({ where: { id: (req.params.lessonId as string) } });
   if (!lesson) return res.status(404).json({ error: 'Leçon introuvable' });
 
   await prisma.$transaction(async (tx) => {
@@ -52,14 +56,17 @@ quizStaffRouter.put('/lessons/:lessonId/quiz', async (req, res) => {
   res.json({ quiz });
 });
 
-/** Le quiz avec réponses + stats de scores (staff) */
+/** Le quiz avec réponses + stats de scores (équipe, scoping formateur) */
 quizStaffRouter.get('/lessons/:lessonId/quiz', async (req, res) => {
+  if (!(await canManageLesson(req.user!, (req.params.lessonId as string)))) {
+    return res.status(403).json({ error: 'Formation non assignée' });
+  }
   const quiz = await prisma.quiz.findUnique({
-    where: { lessonId: req.params.lessonId },
+    where: { lessonId: (req.params.lessonId as string) },
     include: { questions: { orderBy: { order: 'asc' } } },
   });
   const attempts = await prisma.quizAttempt.findMany({
-    where: { lessonId: req.params.lessonId },
+    where: { lessonId: (req.params.lessonId as string) },
     include: { user: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
     take: 20,
@@ -74,7 +81,7 @@ quizLearnerRouter.use(requireAuth);
 /** Le quiz SANS les indications de bonne réponse */
 quizLearnerRouter.get('/lessons/:lessonId/quiz', async (req, res) => {
   const lesson = await prisma.lesson.findUnique({
-    where: { id: req.params.lessonId },
+    where: { id: (req.params.lessonId as string) },
     include: {
       section: { include: { formation: { select: { id: true, status: true } } } },
       quiz: { include: { questions: { orderBy: { order: 'asc' } } } },
@@ -84,8 +91,8 @@ quizLearnerRouter.get('/lessons/:lessonId/quiz', async (req, res) => {
   if (lesson.section.formation.status !== 'PUBLISHED') {
     return res.status(403).json({ error: 'Formation non publiée' });
   }
-  if (req.user!.role !== 'STAFF') {
-    const access = await prisma.access.findUnique({
+  if (!isEquipe(req.user!.role)) {
+    const access = await prisma.enrollment.findUnique({
       where: {
         userId_formationId: {
           userId: req.user!.id,
@@ -123,7 +130,7 @@ quizLearnerRouter.post('/lessons/:lessonId/quiz/attempt', async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'Réponses requises' });
 
   const quiz = await prisma.quiz.findUnique({
-    where: { lessonId: req.params.lessonId },
+    where: { lessonId: (req.params.lessonId as string) },
     include: {
       questions: { orderBy: { order: 'asc' } },
       lesson: {
@@ -136,8 +143,8 @@ quizLearnerRouter.post('/lessons/:lessonId/quiz/attempt', async (req, res) => {
   if (formation.status !== 'PUBLISHED') {
     return res.status(403).json({ error: 'Formation non publiée' });
   }
-  if (req.user!.role !== 'STAFF') {
-    const access = await prisma.access.findUnique({
+  if (!isEquipe(req.user!.role)) {
+    const access = await prisma.enrollment.findUnique({
       where: { userId_formationId: { userId: req.user!.id, formationId: formation.id } },
     });
     if (!access) return res.status(403).json({ error: "Vous n'avez pas accès à cette leçon" });
@@ -169,7 +176,7 @@ quizLearnerRouter.post('/lessons/:lessonId/quiz/attempt', async (req, res) => {
 
   // Meilleur score conservé
   const existing = await prisma.quizAttempt.findUnique({
-    where: { userId_lessonId: { userId: req.user!.id, lessonId: req.params.lessonId } },
+    where: { userId_lessonId: { userId: req.user!.id, lessonId: (req.params.lessonId as string) } },
   });
   const best = Math.max(existing?.score ?? -1, score);
   if (existing) {
@@ -181,7 +188,7 @@ quizLearnerRouter.post('/lessons/:lessonId/quiz/attempt', async (req, res) => {
     await prisma.quizAttempt.create({
       data: {
         userId: req.user!.id,
-        lessonId: req.params.lessonId,
+        lessonId: (req.params.lessonId as string),
         quizId: quiz.id,
         score: best,
         total: questions.length,

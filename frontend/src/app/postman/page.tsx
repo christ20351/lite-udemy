@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { Lightbulb, TriangleAlert } from "lucide-react";
 
 // ── Collection de requêtes de démonstration ──────────────────────────
 
@@ -21,11 +22,11 @@ const API_URL = "http://localhost:4100";
 const PRESETS: Preset[] = [
   {
     id: "login-staff",
-    name: "1 · Connexion staff",
+    name: "1 · Connexion gestion",
     method: "POST",
     url: "/api/auth/login",
-    body: { email: "admin@liteudemy.local", password: "admin123" },
-    note: "Authentifie le staff — pose un cookie httpOnly signé (JWT) utilisé par toutes les requêtes suivantes.",
+    body: { email: "gestion@liteudemy.local", password: "gestion123" },
+    note: "Authentifie un membre de l'équipe — pose un cookie httpOnly signé (JWT) utilisé par toutes les requêtes suivantes.",
   },
   {
     id: "stats-dashboard",
@@ -33,20 +34,15 @@ const PRESETS: Preset[] = [
     method: "GET",
     url: "/api/stats/dashboard",
     loginAs: "staff",
-    note: "Agrégations CRM réservées au staff : clients, formations, accès, sessions, quiz… (403 pour un apprenant).",
+    note: "Agrégations pédagogiques réservées à la gestion : apprenants, formations, inscriptions, sessions… (403 pour un apprenant).",
   },
   {
-    id: "deal-create",
-    name: "3 · Créer une opportunité",
-    method: "POST",
-    url: "/api/deals",
-    body: {
-      title: "Demo Postman — offre team building",
-      amount: 6200,
-      notes: "Créée depuis le Mini Postman",
-    },
+    id: "kanban-progression",
+    name: "3 · Kanban de progression",
+    method: "GET",
+    url: "/api/learners/progression/kanban",
     loginAs: "staff",
-    note: "Écriture dans le pipeline commercial : le deal naît à l'étape NEW, glisse-le ensuite dans le kanban.",
+    note: "Une carte par inscription (apprenant × formation), bucket calculé d'après la progression réelle.",
   },
   {
     id: "me-formations",
@@ -54,17 +50,17 @@ const PRESETS: Preset[] = [
     method: "GET",
     url: "/api/me/formations",
     loginAs: "learner",
-    loginHint: "jean@acme.example",
-    note: "Le rôle CONTACT du token limite la réponse aux seules formations où un accès a été attribué — isolation par client.",
+    loginHint: "jean@example.fr",
+    note: "Le rôle APPRENANT du token limite la réponse aux seules formations où l'apprenant est inscrit.",
   },
 ];
 
 const METHOD_COLOR: Record<string, string> = {
-  GET: "text-emerald-400",
-  POST: "text-amber-400",
-  PATCH: "text-sky-400",
-  PUT: "text-sky-400",
-  DELETE: "text-red-400",
+  GET: "text-indigo-300",
+  POST: "text-indigo-400",
+  PATCH: "text-slate-300",
+  PUT: "text-slate-300",
+  DELETE: "text-slate-400",
 };
 
 // ── Coloration syntaxique JSON minimaliste ───────────────────────────
@@ -78,11 +74,11 @@ function highlightJson(json: string) {
   return escaped.replace(
     /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
     (match) => {
-      let cls = "text-amber-300"; // nombres
+      let cls = "text-indigo-400"; // nombres
       if (/^"/.test(match)) {
-        cls = /:$/.test(match) ? "text-sky-300" : "text-emerald-300"; // clé vs valeur
+        cls = /:$/.test(match) ? "text-indigo-300" : "text-indigo-200"; // clé vs valeur
       } else if (/true|false/.test(match)) {
-        cls = "text-violet-400";
+        cls = "text-indigo-400";
       } else if (/null/.test(match)) {
         cls = "text-slate-500";
       }
@@ -132,8 +128,8 @@ export default function PostmanPage() {
       if (preset.loginAs) {
         const creds =
           preset.loginAs === "staff"
-            ? { email: "admin@liteudemy.local", password: "admin123" }
-            : { email: "jean@acme.example", password: "demo123" };
+            ? { email: "gestion@liteudemy.local", password: "gestion123" }
+            : { email: "jean@example.fr", password: "demo123" };
         await fetch(`${API_URL}/api/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -172,23 +168,19 @@ export default function PostmanPage() {
   const statusColor = !response
     ? ""
     : response.status < 300
-      ? "text-emerald-400"
-      : response.status < 400
-        ? "text-sky-400"
-        : response.status < 500
-          ? "text-amber-400"
-          : "text-red-400";
+      ? "text-indigo-400"
+      : "text-slate-200";
 
   return (
     <main className="min-h-screen bg-[#0d1117] text-slate-200">
       {/* Barre supérieure */}
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-500 text-sm font-black text-white">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-sm font-black text-white">
           LP
         </div>
         <div>
           <p className="text-sm font-bold">
-            Lite Postman <span className="text-orange-400">· API Lite Academy</span>
+            LoraPostman <span className="text-indigo-400">· API LoraOne</span>
           </p>
           <p className="text-[11px] text-slate-500">
             Base : {API_URL} · cookies httpOnly inclus automatiquement
@@ -206,7 +198,7 @@ export default function PostmanPage() {
         {/* ── Collection ── */}
         <aside className="w-72 shrink-0 border-r border-white/10 p-4">
           <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-            Collection — Lite Academy
+            Collection — LoraOne
           </p>
           <div className="space-y-1">
             {PRESETS.map((p) => (
@@ -215,7 +207,7 @@ export default function PostmanPage() {
                 onClick={() => selectPreset(p.id)}
                 className={`w-full rounded-lg px-3 py-2.5 text-left text-xs transition-colors ${
                   presetId === p.id
-                    ? "bg-white/10 text-white ring-1 ring-orange-500/40"
+                    ? "bg-white/10 text-white ring-1 ring-indigo-500/40"
                     : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
                 }`}
               >
@@ -226,7 +218,10 @@ export default function PostmanPage() {
           </div>
 
           <div className="mt-5 rounded-lg border border-white/10 bg-white/5 p-3 text-[11px] leading-relaxed text-slate-400">
-            <p className="mb-1 font-semibold text-slate-300">💡 Note</p>
+            <p className="mb-1 flex items-center gap-1.5 font-semibold text-slate-300">
+              <Lightbulb className="h-4 w-4" />
+              Note
+            </p>
             {preset.note}
           </div>
         </aside>
@@ -258,7 +253,7 @@ export default function PostmanPage() {
             <button
               onClick={send}
               disabled={sending}
-              className="rounded-lg bg-orange-500 px-6 text-sm font-bold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
+              className="rounded-lg bg-indigo-600 px-6 text-sm font-bold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
             >
               {sending ? "Envoi…" : "Send"}
             </button>
@@ -275,7 +270,7 @@ export default function PostmanPage() {
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 spellCheck={false}
-                className="w-full rounded-lg border border-white/10 bg-[#161b22] p-3 font-mono text-xs text-slate-300 outline-none focus:border-orange-500/50"
+                className="w-full rounded-lg border border-white/10 bg-[#161b22] p-3 font-mono text-xs text-slate-300 outline-none focus:border-indigo-500/50"
               />
             </div>
           )}
@@ -288,7 +283,8 @@ export default function PostmanPage() {
               </p>
               {response && (
                 <div className="flex items-center gap-4 text-xs">
-                  <span className={`font-bold ${statusColor}`}>
+                  <span className={`flex items-center gap-1 font-bold ${statusColor}`}>
+                    {response.status >= 400 && <TriangleAlert className="h-3.5 w-3.5" />}
                     {response.status} {response.statusText}
                   </span>
                   <span className="text-slate-500">{response.timeMs} ms</span>
@@ -298,7 +294,10 @@ export default function PostmanPage() {
             </div>
             <div className="min-h-64 rounded-lg border border-white/10 bg-[#0a0e14] p-4">
               {error ? (
-                <p className="text-xs text-red-400">⚠️ {error}</p>
+                <p className="flex items-start gap-1.5 text-xs text-slate-300">
+                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  {error}
+                </p>
               ) : response ? (
                 <pre
                   className="overflow-x-auto font-mono text-xs leading-relaxed"
@@ -306,7 +305,7 @@ export default function PostmanPage() {
                 />
               ) : (
                 <p className="text-xs text-slate-600">
-                  Clique sur <span className="font-bold text-orange-400">Send</span> pour exécuter
+                  Clique sur <span className="font-bold text-indigo-400">Send</span> pour exécuter
                   la requête — choisis d&apos;abord une entrée dans la collection à gauche.
                 </p>
               )}

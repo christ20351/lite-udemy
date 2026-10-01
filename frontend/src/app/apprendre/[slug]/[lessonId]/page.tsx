@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import PortalHeader from "@/components/PortalHeader";
 import QuizBox from "@/components/QuizBox";
+import { Check, CircleAlert, Lightbulb, Lock, Trophy } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
@@ -29,6 +30,8 @@ type LessonData = {
   formation: { id: string; title: string; slug: string };
   lastPosition: number;
   completed: boolean;
+  isLast: boolean;
+  formationProgress: { totalLessons: number; completedLessons: number };
   bestQuizScore?: { score: number; total: number } | null;
   prev: { id: string; title: string } | null;
   next: { id: string; title: string } | null;
@@ -41,6 +44,8 @@ export default function LessonPlayerPage() {
   const [data, setData] = useState<LessonData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
+  const [completing, setCompleting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const resumedRef = useRef(false);
   const lastSavedRef = useRef(0);
@@ -62,6 +67,15 @@ export default function LessonPlayerPage() {
   useEffect(() => {
     if (user) load();
   }, [user, load]);
+
+  // Une leçon sans vidéo ouverte hors dernière étape est considérée lue :
+  // sans cela, une formation à leçons textuelles ne pourrait jamais être clôturée.
+  useEffect(() => {
+    if (!data || data.completed || data.lesson.videoPath || data.isLast) return;
+    setCompleted(true);
+    saveProgress(0, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   // Sauvegarde de la position toutes les 10 s + reprise au chargement
   const saveProgress = useCallback(
@@ -100,17 +114,29 @@ export default function LessonPlayerPage() {
     }
   }
 
-  function markCompleted() {
-    setCompleted(true);
-    const v = videoRef.current;
-    saveProgress(v?.currentTime ?? 0, true);
+  async function completeFormation() {
+    if (!data) return;
+    setCompleting(true);
+    setActionError(null);
+    try {
+      await api(`/me/formations/${data.formation.slug}/complete`, { method: "POST" });
+      router.push(
+        `/mes-formations?completed=${encodeURIComponent(data.formation.slug)}&title=${encodeURIComponent(data.formation.title)}`
+      );
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Erreur");
+      setCompleting(false);
+    }
   }
 
   if (error) {
     return (
       <main className="flex-1 flex items-center justify-center p-6">
         <div className="text-center">
-          <p className="text-red-600">{error}</p>
+          <p className="notice-box justify-center">
+            <CircleAlert className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </p>
           <Link href="/mes-formations" className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline mt-2 inline-block">
             ← Mes formations
           </Link>
@@ -127,35 +153,81 @@ export default function LessonPlayerPage() {
   }
 
   const { lesson, formation, prev, next } = data;
+  const formationDone =
+    data.formationProgress.totalLessons > 0 &&
+    data.formationProgress.completedLessons >= data.formationProgress.totalLessons;
+  // Sur la dernière leçon : toutes les autres leçons doivent être terminées
+  const othersDone =
+    data.formationProgress.completedLessons >= data.formationProgress.totalLessons - 1;
 
   return (
     <main className="flex-1 flex flex-col">
       <PortalHeader />
 
       <div className="bg-surface border-b border-line">
+        <div
+          aria-hidden
+          className="h-0.5 w-full"
+          style={{ background: "linear-gradient(90deg, #6366f1, #a855f7, #ec4899)" }}
+        />
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
           <div className="min-w-0">
             <Link
               href={`/apprendre/${formation.slug}`}
-              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+              className="text-xs font-semibold text-primary hover:underline"
             >
               ← {formation.title}
             </Link>
-            <p className="font-semibold truncate">{lesson.title}</p>
+            <p className="font-bold truncate text-fg">{lesson.title}</p>
           </div>
-          <button
-            onClick={markCompleted}
-            disabled={completed}
-            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
-              completed
-                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                : "bg-primary text-white hover:bg-primary-strong"
-            }`}
-          >
-            {completed ? "✓ Terminée" : "Marquer comme terminée"}
-          </button>
+          {formationDone ? (
+            <button
+              disabled
+              className="shrink-0 rounded-xl px-4 py-2 text-sm font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 cursor-default"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Check className="h-4 w-4" /> Formation terminée
+              </span>
+            </button>
+          ) : !data.isLast ? (
+            <button
+              disabled
+              title="Vous pourrez terminer la formation depuis la dernière leçon du parcours."
+              className="shrink-0 rounded-xl px-4 py-2 text-sm font-bold bg-black/10 dark:bg-white/10 text-faint cursor-not-allowed"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Lock className="h-4 w-4" /> Terminer la formation
+              </span>
+            </button>
+          ) : !othersDone ? (
+            <button
+              disabled
+              title="Terminez d'abord toutes les leçons du parcours."
+              className="shrink-0 rounded-xl px-4 py-2 text-sm font-bold bg-black/10 dark:bg-white/10 text-faint cursor-not-allowed"
+            >
+              Terminer la formation · {data.formationProgress.completedLessons}/
+              {data.formationProgress.totalLessons}
+            </button>
+          ) : (
+            <button
+              onClick={completeFormation}
+              disabled={completing}
+              className="btn-gradient shrink-0 rounded-xl px-4 py-2 text-sm font-bold"
+            >
+              {completing ? "Clôture…" : "Terminer la formation"}
+            </button>
+          )}
         </div>
       </div>
+
+      {actionError && (
+        <div className="mx-auto w-full max-w-6xl px-6 pt-4">
+          <p className="notice-box">
+            <CircleAlert className="h-4 w-4 shrink-0" />
+            <span>{actionError}</span>
+          </p>
+        </div>
+      )}
 
       <div className="flex-1 max-w-6xl w-full mx-auto px-6 py-6">
         {lesson.videoPath && (
@@ -165,7 +237,7 @@ export default function LessonPlayerPage() {
             controlsList="nodownload"
             onTimeUpdate={onTimeUpdate}
             onPause={() => saveProgress(videoRef.current?.currentTime ?? 0)}
-            className="w-full rounded-xl bg-black aspect-video"
+            className="w-full rounded-2xl bg-black aspect-video shadow-xl"
             src={`${API_URL}${lesson.videoPath}`}
           />
         )}
@@ -205,9 +277,9 @@ export default function LessonPlayerPage() {
                 return (
                   <div
                     key={i}
-                    className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
+                    className="rounded-xl border-l-4 border-indigo-500 bg-indigo-500/10 px-4 py-3 text-sm text-fg-soft"
                   >
-                    💡 {b.text}
+                    <Lightbulb className="inline h-4 w-4 align-[-3px] text-primary" /> {b.text}
                   </div>
                 );
               }
@@ -257,16 +329,14 @@ export default function LessonPlayerPage() {
           {next ? (
             <Link
               href={`/apprendre/${formation.slug}/${next.id}`}
-              className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700"
+              className="btn-gradient max-w-xs truncate"
             >
               Leçon suivante : {next.title} →
             </Link>
           ) : (
-            <Link
-              href={`/apprendre/${formation.slug}`}
-              className="rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-700"
-            >
-              Retour au sommaire 🎉
+            <Link href={`/apprendre/${formation.slug}`} className="btn-gradient">
+              <Trophy className="h-4 w-4" />
+              Retour au sommaire
             </Link>
           )}
         </nav>

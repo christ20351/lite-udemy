@@ -25,9 +25,10 @@ catalogueRouter.get('/', async (req, res) => {
       category: true,
       mode: true,
       price: true,
+      thumbnailUrl: true,
       createdAt: true,
       sections: { include: { lessons: { select: { id: true } } } },
-      accesses: req.user ? { where: { userId: req.user.id }, select: { id: true } } : false,
+      enrollments: req.user ? { where: { userId: req.user.id }, select: { id: true } } : false,
     },
   });
 
@@ -40,16 +41,17 @@ catalogueRouter.get('/', async (req, res) => {
       category: f.category,
       mode: f.mode,
       price: f.price,
+      thumbnailUrl: f.thumbnailUrl,
       isNew: estNouveau(f.createdAt),
       lessonCount: f.sections.reduce((n, s) => n + s.lessons.length, 0),
-      enrolled: Array.isArray(f.accesses) ? f.accesses.length > 0 : false,
+      enrolled: Array.isArray(f.enrollments) ? f.enrollments.length > 0 : false,
     })),
   });
 });
 
 // Auto-inscription d'un apprenant à une formation GRATUITE publiée
 enrollRouter.post('/', async (req, res) => {
-  if (req.user!.role !== 'CONTACT') {
+  if (req.user!.role !== 'APPRENANT') {
     return res.status(403).json({ error: "Réservé aux comptes apprenants" });
   }
   const parsed = z.object({ formationId: z.string().min(1) }).safeParse(req.body);
@@ -64,16 +66,16 @@ enrollRouter.post('/', async (req, res) => {
   if (formation.price !== null) {
     return res.status(400).json({
       error:
-        'Cette formation est payante — contactez l\'organisme pour souscrire (devis puis attribution d\'accès)',
+        'Cette formation est payante — l\'inscription se fait auprès de l\'organisme (paiement hors ligne)',
     });
   }
 
-  const already = await prisma.access.findUnique({
+  const already = await prisma.enrollment.findUnique({
     where: { userId_formationId: { userId: req.user!.id, formationId: formation.id } },
   });
   if (already) return res.status(409).json({ error: 'Vous suivez déjà cette formation' });
 
-  await prisma.access.create({
+  await prisma.enrollment.create({
     data: { userId: req.user!.id, formationId: formation.id },
   });
   res.status(201).json({ ok: true });

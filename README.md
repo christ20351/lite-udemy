@@ -1,8 +1,8 @@
-# Lite Academy — CRM & Gestion des Formations
+# LoraOne — Plateforme de formations en ligne
 
-CRM haute technologie pour organisme de formation : gestion commerciale (pipeline kanban,
-analytics), catalogue de formations en ligne/présentiel, cours riches (vidéo, images, quiz)
-et portail apprenant immersif.
+Plateforme de formation B2C : l'apprenant s'inscrit directement aux cours,
+l'équipe interne gère le catalogue et suit la progression. Cours riches
+(vidéo, images, quiz), sessions présentielles et portail apprenant immersif.
 
 **Stack** : Node.js 24 · Express 5 · TypeScript · Prisma · PostgreSQL · Next.js 16 · React 19 · Tailwind CSS 4
 
@@ -12,10 +12,10 @@ et portail apprenant immersif.
 lite-udemy/
 ├── backend/            API Express + Prisma (port 4100)
 │   ├── prisma/         schéma + migrations + seed démo
-│   └── src/routes/     auth, clients, formations, deals, quiz, sessions,
-│                       catalogue, me (portail), stats, uploads (vidéo/images)
+│   └── src/routes/     auth, team, learners, formations, quiz, sessions,
+│                       catalogue, enrollments, me (portail), stats, uploads
 ├── frontend/           Next.js App Router (port 3000)
-│   └── src/            back-office staff + portail apprenant + middleware
+│   └── src/            espace équipe + portail apprenant + middleware
 ├── tests/              tests end-to-end API (python3)
 ├── dev.sh              démarre backend + frontend
 └── watchdog.sh         relance auto des serveurs
@@ -40,24 +40,30 @@ npm run dev
 Variables d'environnement : voir `backend/.env` (`DATABASE_URL`, `JWT_SECRET`, `PORT`) et
 `frontend/.env.local` (`NEXT_PUBLIC_API_URL`).
 
-## Fonctionnalités
+## Rôles
 
-### 📈 CRM & commercial
-- **Pipeline kanban** : opportunités avec glisser-déposer (Contact → Qualifié → Devis →
-  Négociation → Gagné/Perdu), CA prévisionnel par étape
-- **Analytics** : CA mensuel (graphiques SVG maison), entonnoir de conversion,
-  top formations, scores moyens aux quiz
-- **CRM clients** : fiches entreprise/particulier, statuts (lead → client), contacts
-  apprenants, journal d'interactions (appels, emails, RDV)
+| Rôle | Périmètre |
+|---|---|
+| **Admin** | Tout le back-office + gestion de l'équipe (créer les comptes, changer les rôles) |
+| **Gestionnaire** | Crée les formations, assigne les formateurs, publie, inscrit les apprenants, analytics |
+| **Formateur** | Construit le contenu (sections, leçons, quiz, vidéos) et anime les sessions de **ses** formations |
+| **Apprenant** | Portail : catalogue public, auto-inscription aux formations gratuites, progression, quiz |
+
+Le flux : le gestionnaire crée la coquille de formation et assigne un formateur ;
+le formateur construit le cours et son contenu ; le gestionnaire publie ;
+l'apprenant s'inscrit (gratuit = auto-inscription, payant = inscription par
+l'équipe en attendant le paiement en ligne).
+
+## Fonctionnalités
 
 ### 🎓 Formations & pédagogie
 - **Builder de cours avancé** : sections/leçons avec **blocs de contenu** (texte riche,
   images uploadées, code, encadrés) réordonnables — vidéo toujours en haut
-- **Quiz** : QCM créés par le staff, correction serveur, meilleur score conservé,
+- **Quiz** : QCM créés par le formateur, correction serveur, meilleur score conservé,
   statistiques de réussite
 - **Streaming vidéo** protégé (HTTP Range, seek) : accessible seulement aux inscrits
 - **Sessions présentielles** avec modalité par créneau (présentiel/visio), calendrier
-  mensuel et détection de conflits formateur
+  mensuel, inscription des participants et pointage des présences
 
 ### 👤 Portail apprenant
 - Inscription libre, **catalogue public** (formations gratuites ou payantes, badge
@@ -66,19 +72,29 @@ Variables d'environnement : voir `backend/.env` (`DATABASE_URL`, `JWT_SECRET`, `
   couvertures générées, progression globale
 - Lecteur avec reprise de position, complétion automatique à 92 %, quiz interactifs
 
+### 📊 Espace équipe
+- **Tableau de bord** : apprenants, inscriptions, engagement 30 j, sessions à venir
+- **Progression** : kanban lecture seule (Non commencé / En cours / Terminé),
+  une carte par inscription, filtrable par formation
+- **Apprenants** : fiches détaillées (inscriptions, progression, quiz, sessions)
+- **Analytics pédagogiques** : inscriptions par mois, top formations, complétion
+  moyenne, scores aux quiz, auto-inscriptions vs inscriptions équipe
+- **Équipe** (admin) : création de comptes, changement de rôles
+
 ### 🔐 Sécurité
 - JWT httpOnly avec rôle embarqué revérifié en base à chaque requête
-- Garde-fous de rôle côté API (403) et middleware serveur côté Next.js
-- Mots de passe bcrypt, isolation stricte des données entre clients
+- Garde-fous par rôle côté API (403) et middleware serveur côté Next.js
+- Périmètre formateur : seules les formations qui lui sont assignées
+- Mots de passe bcrypt, isolation stricte des données entre apprenants
 
 ### 🌗 Divers
 - Thème clair/sombre avec détection OS et persistance
-- 2 roles : staff (back-office) et contacts apprenants (portail)
+- Mini Postman intégré (`/postman`) pour explorer l'API
 
 ## Tests
 
 ```bash
-python3 tests/e2e_api.py     # 28+ tests API end-to-end
+python3 tests/e2e_api.py     # flux complet multi-rôles
 python3 tests/e2e_video.py   # upload + streaming + protection vidéo
 ```
 
@@ -86,8 +102,7 @@ python3 tests/e2e_video.py   # upload + streaming + protection vidéo
 
 | Rôle | Email | Mot de passe |
 |---|---|---|
-| Staff | `admin@liteudemy.local` | `admin123` |
+| Admin | `admin@liteudemy.local` | `admin123` |
+| Gestionnaire | `gestion@liteudemy.local` | `gestion123` |
 | Formateur | `formateur@liteudemy.local` | `formateur123` |
-| Apprenant | `jean@acme.example` | `demo123` |
-# lite-udemy
-# lite-udemy
+| Apprenants | `jean@example.fr`, `lea@example.fr`, `marie@example.fr` | `demo123` |
