@@ -1,0 +1,12 @@
+# Divers
+logs/
+*.log
+.DS_Store
+*.swp
+uploads/
+
+# Les .gitignore de backend/ et frontend/ couvrent le reste
+# (node_modules, .next, dist, .env, .env*.local)
+
+# Interne
+.zcode/

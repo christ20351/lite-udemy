@@ -1,0 +1,315 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────
+
+enum Role {
+  STAFF // équipe interne : admin / commercial / formateur
+  CONTACT // apprenant rattaché à un client, accès au portail
+}
+
+enum ClientType {
+  COMPANY
+  INDIVIDUAL
+}
+
+enum ClientStatus {
+  LEAD
+  PROSPECT
+  CLIENT
+  INACTIVE
+}
+
+enum FormationMode {
+  ONLINE
+  ONSITE
+  HYBRID
+}
+
+enum FormationStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum InteractionType {
+  CALL
+  EMAIL
+  MEETING
+  NOTE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+}
+
+enum DealStage {
+  NEW
+  QUALIFIED
+  QUOTE
+  NEGOTIATION
+  WON
+  LOST
+}
+
+enum SessionModality {
+  PRESENTIEL
+  ONLINE
+}
+
+// ─── CRM ──────────────────────────────────────────────────────────────
+
+/// Utilisateur de l'application : soit le staff interne, soit un
+/// contact apprenant (rattaché à un Client, role = CONTACT).
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(CONTACT)
+  clientId     String?
+  client       Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  interactions    Interaction[]        @relation("InteractionAuthor")
+  grantedAccesses Access[]             @relation("AccessGranter")
+  accesses        Access[]
+  progresses      LessonProgress[]
+  sessionsTrained Session[]            @relation("SessionTrainer")
+  participations  SessionParticipant[]
+  dealsOwned      Deal[]               @relation("DealOwner")
+  quizAttempts    QuizAttempt[]
+
+  @@index([clientId])
+}
+
+model Client {
+  id        String       @id @default(cuid())
+  name      String
+  type      ClientType   @default(COMPANY)
+  status    ClientStatus @default(LEAD)
+  email     String?
+  phone     String?
+  address   String?
+  notes     String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  users         User[]
+  subscriptions Subscription[]
+  interactions  Interaction[]
+  deals         Deal[]
+}
+
+model Interaction {
+  id       String          @id @default(cuid())
+  clientId String
+  client   Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  authorId String?
+  author   User?           @relation("InteractionAuthor", fields: [authorId], references: [id])
+  type     InteractionType @default(NOTE)
+  content  String
+  createdAt DateTime       @default(now())
+
+  @@index([clientId])
+}
+
+// ─── Catalogue formations ─────────────────────────────────────────────
+
+model Formation {
+  id           String          @id @default(cuid())
+  title        String
+  slug         String          @unique
+  description  String?
+  category     String?
+  mode         FormationMode   @default(ONLINE)
+  status       FormationStatus @default(DRAFT)
+  thumbnailUrl String?
+  /// null = gratuite · sinon prix indicatif en € (pas de paiement en ligne en v1)
+  price        Float?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  sections      Section[]
+  sessions      Session[]
+  subscriptions Subscription[]
+  accesses      Access[]
+  deals         Deal[]
+}
+
+model Section {
+  id          String    @id @default(cuid())
+  title       String
+  position    Int       @default(0)
+  formationId String
+  formation   Formation @relation(fields: [formationId], references: [id], onDelete: Cascade)
+
+  lessons Lesson[]
+
+  @@index([formationId])
+}
+
+/// Leçon : contenu texte riche (content) et/ou vidéo (videoPath).
+model Lesson {
+  id        String  @id @default(cuid())
+  sectionId String
+  section   Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  title     String
+  content   String?
+  videoPath String?
+  /// Contenu structuré : [{type:"text"|"image"|"code"|"callout", text, url?, caption?}]
+  blocks    Json?
+  duration  Int?
+  position  Int     @default(0)
+  isPreview Boolean @default(false)
+
+  progresses LessonProgress[]
+  quiz       Quiz?
+  quizAttempts QuizAttempt[]
+
+  @@index([sectionId])
+}
+
+// ─── Souscriptions & accès ────────────────────────────────────────────
+
+/// Le contrat : un Client souscrit à une Formation (nb de places).
+model Subscription {
+  id          String             @id @default(cuid())
+  clientId    String
+  client      Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  formationId String
+  formation   Formation          @relation(fields: [formationId], references: [id], onDelete: Cascade)
+  status      SubscriptionStatus @default(ACTIVE)
+  seats       Int                @default(1)
+  startedAt   DateTime           @default(now())
+  endsAt      DateTime?
+
+  @@unique([clientId, formationId])
+}
+
+/// Le droit effectif : un contact précis peut suivre une formation.
+model Access {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  formationId String
+  formation   Formation @relation(fields: [formationId], references: [id], onDelete: Cascade)
+  grantedById String?
+  grantedBy   User?     @relation("AccessGranter", fields: [grantedById], references: [id])
+  grantedAt   DateTime  @default(now())
+
+  @@unique([userId, formationId])
+}
+
+// ─── Suivi de progression ─────────────────────────────────────────────
+
+model LessonProgress {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId     String
+  lesson       Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  completed    Boolean  @default(false)
+  lastPosition Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, lessonId])
+}
+
+// ─── Présentiel ───────────────────────────────────────────────────────
+
+model Session {
+  id          String    @id @default(cuid())
+  formationId String
+  formation   Formation @relation(fields: [formationId], references: [id], onDelete: Cascade)
+  title       String
+  startAt     DateTime
+  endAt       DateTime
+  location    String?
+  capacity    Int       @default(10)
+  modality    SessionModality @default(PRESENTIEL)
+  meetingUrl  String?
+  trainerId   String?
+  trainer     User?     @relation("SessionTrainer", fields: [trainerId], references: [id])
+
+  participants SessionParticipant[]
+
+  @@index([formationId])
+}
+
+model SessionParticipant {
+  id           String   @id @default(cuid())
+  sessionId    String
+  session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attended     Boolean  @default(false)
+  registeredAt DateTime @default(now())
+
+  @@unique([sessionId, userId])
+}
+
+// ─── Pipeline commercial ──────────────────────────────────────────────
+
+model Deal {
+  id          String    @id @default(cuid())
+  title       String
+  stage       DealStage @default(NEW)
+  amount      Float?
+  clientId    String?
+  client      Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  formationId String?
+  formation   Formation? @relation(fields: [formationId], references: [id], onDelete: SetNull)
+  ownerId     String?
+  owner       User?     @relation("DealOwner", fields: [ownerId], references: [id])
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([stage])
+}
+
+// ─── Quiz ─────────────────────────────────────────────────────────────
+
+model Quiz {
+  id       String @id @default(cuid())
+  lessonId String @unique
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]  @relation("QuizAttemptQuiz")
+}
+
+model QuizQuestion {
+  id      String @id @default(cuid())
+  quizId  String
+  quiz    Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  text    String
+  choices Json   // [{text: string, correct: boolean}]
+  order   Int    @default(0)
+
+  @@index([quizId])
+}
+
+model QuizAttempt {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId  String
+  lesson    Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  quizId    String
+  quiz      Quiz     @relation("QuizAttemptQuiz", fields: [quizId], references: [id], onDelete: Cascade)
+  score     Int
+  total     Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, lessonId])
+  @@index([lessonId])
+}

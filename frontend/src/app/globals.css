@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+/* ── Mode sombre piloté par la classe .dark sur <html> ─────────────── */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Tokens sémantiques — thème clair ──────────────────────────────── */
+:root {
+  color-scheme: light;
+
+  --bg: #f3f5fb; /* fond d'application */
+  --surface: #ffffff; /* cartes */
+  --surface-2: #f7f9fd; /* remplissages doux (en-têtes, hovers) */
+  --line: #e2e7f2; /* bordures */
+  --fg: #121a33; /* titres */
+  --fg-soft: #384259; /* texte courant */
+  --muted: #667089; /* texte secondaire */
+  --faint: #98a1b8; /* horodatages, placeholders */
+  --primary: #4f46e5;
+  --primary-strong: #4338ca;
+  --primary-soft: #eef1fe;
+  --sidebar: #131a36;
+  --sidebar-fg: #dfe4f5;
+  --sidebar-muted: #9aa4c8;
+  --sidebar-line: #232d52;
+  --shadow-card: 0 1px 2px rgb(18 26 51 / 0.04), 0 10px 28px -14px rgb(18 26 51 / 0.16);
+}
+
+/* ── Tokens — thème sombre (bleu nuit, jamais noir pur) ────────────── */
+.dark {
+  color-scheme: dark;
+
+  --bg: #0b1122;
+  --surface: #131b33;
+  --surface-2: #1a2340;
+  --line: #273154;
+  --fg: #eef1fb;
+  --fg-soft: #c6cce0;
+  --muted: #8f99b8;
+  --faint: #626d92;
+  --primary: #6366f1;
+  --primary-strong: #7c7ff5;
+  --primary-soft: #1d2547;
+  --sidebar: #0e1428;
+  --sidebar-fg: #dfe4f5;
+  --sidebar-muted: #8f99b8;
+  --sidebar-line: #1f2947;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), 0 12px 32px -14px rgb(0 0 0 / 0.6);
+}
+
+/* ── Exposition des tokens comme utilitaires Tailwind ──────────────── */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-fg-soft: var(--fg-soft);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-primary: var(--primary);
+  --color-primary-strong: var(--primary-strong);
+  --color-primary-soft: var(--primary-soft);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-fg: var(--sidebar-fg);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-line: var(--sidebar-line);
+}
+
+/* ── Base ──────────────────────────────────────────────────────────── */
+body {
+  background: var(--bg);
+  color: var(--fg-soft);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+/* ── Composants réutilisables ──────────────────────────────────────── */
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)];
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg
+      placeholder:text-faint transition-colors
+      focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary
+      px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors
+      hover:bg-primary-strong focus:outline-none focus:ring-2 focus:ring-primary/40
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-dark {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-fg
+      px-4 py-2 text-sm font-semibold text-bg transition-opacity
+      hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-lg border border-line
+      bg-surface px-3 py-2 text-sm font-medium text-fg-soft transition-colors
+      hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+}
+/* scrollbar masquée pour les carrousels */
+.scrollbar-none { scrollbar-width: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
