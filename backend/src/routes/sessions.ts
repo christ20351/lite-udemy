@@ -108,6 +108,13 @@ sessionsRouter.patch('/:id', async (req, res) => {
   if (!(await canManageSession(req.user!, (req.params.id as string)))) {
     return res.status(403).json({ error: 'Session non assignée' });
   }
+  // État avant modification : indispensable pour notifier si les dates bougent
+  const beforeSession = await prisma.session.findUnique({
+    where: { id: req.params.id as string },
+    select: { title: true, startAt: true, endAt: true, trainerId: true, formationId: true },
+  });
+  if (!beforeSession) return res.status(404).json({ error: 'Session introuvable' });
+
   const { startAt, endAt, trainerId, ...rest } = parsed.data;
   if (trainerId !== undefined && trainerId) {
     const trainer = await prisma.user.findUnique({ where: { id: trainerId } });
@@ -127,7 +134,16 @@ sessionsRouter.patch('/:id', async (req, res) => {
           : {}),
       },
     });
-    res.json({ session });
+
+    // Créneau modifié ? → notification automatique (inscrits + formateurs)
+    const notified = await notifySessionMoved(
+      req.user!,
+      { title: beforeSession.title, startAt: beforeSession.startAt, endAt: beforeSession.endAt,
+        trainerId: beforeSession.trainerId, formationId: beforeSession.formationId },
+      { startAt: new Date(session.startAt), endAt: new Date(session.endAt) }
+    );
+
+    res.json({ session, notified });
   } catch {
     res.status(404).json({ error: 'Session introuvable' });
   }
@@ -182,6 +198,63 @@ sessionsRouter.post('/:id/participants', async (req, res) => {
 });
 
 // Marquer présence / absences
+/** Notifie les apprenants inscrits à la formation + les formateurs assignés
+ *  (et le formateur de la session) après TOUT changement de date/horaire.
+ *  Compare l'ancien et le nouveau créneau, adapte le message, exclut
+ *  l'auteur du changement. Retourne le nombre de personnes notifiées. */
+async function notifySessionMoved(
+  actor: { id: string },
+  before: { title: string; startAt: Date; endAt: Date; trainerId: string | null; formationId: string },
+  after: { startAt: Date; endAt: Date }
+): Promise<number> {
+  const dateChanged = before.startAt.getTime() !== after.startAt.getTime();
+  const timeChanged = before.startAt.getHours() !== after.startAt.getHours() ||
+    before.startAt.getMinutes() !== after.startAt.getMinutes();
+  if (!dateChanged && !timeChanged) return 0;
+
+  const formation = await prisma.formation.findUnique({
+    where: { id: before.formationId },
+    select: {
+      instructors: { select: { id: true } },
+      enrollments: { select: { userId: true } },
+    },
+  });
+  if (!formation) return 0;
+
+  const destinataires = new Map<string, 'APPRENANT' | 'EQUIPE'>();
+  for (const e of formation.enrollments) {
+    if (e.userId !== actor.id) destinataires.set(e.userId, 'APPRENANT');
+  }
+  for (const i of formation.instructors) {
+    if (i.id !== actor.id) destinataires.set(i.id, 'EQUIPE');
+  }
+  if (before.trainerId && before.trainerId !== actor.id) {
+    destinataires.set(before.trainerId, 'EQUIPE');
+  }
+
+  const memeJour =
+    before.startAt.getFullYear() === after.startAt.getFullYear() &&
+    before.startAt.getMonth() === after.startAt.getMonth() &&
+    before.startAt.getDate() === after.startAt.getDate();
+
+  const quand = `${dateFR(after.startAt)} à ${heureFR(after.startAt)}`;
+  const body = memeJour
+    ? `L'horaire a changé : ${heureFR(before.startAt)} → ${heureFR(after.startAt)} le ${quand}.`
+    : `La session passe du ${dateFR(before.startAt)} (${heureFR(before.startAt)}) au ${quand}.`;
+
+  const data = [...destinataires.entries()].map(([userId, kind]) => ({
+    userId,
+    type: 'SESSION_RESCHEDULED',
+    title: `Session modifiée : « ${before.title} »`,
+    body,
+    link: kind === 'APPRENANT' ? '/mes-sessions' : '/backoffice/calendar',
+  }));
+  if (data.length > 0) {
+    await prisma.notification.createMany({ data });
+  }
+  return data.length;
+}
+
 const dateFR = (d: Date) =>
   d.toLocaleDateString('fr-FR', {
     weekday: 'long', day: 'numeric', month: 'long',
@@ -202,71 +275,28 @@ sessionsRouter.post('/:id/reschedule', async (req, res) => {
 
   const session = await prisma.session.findUnique({
     where: { id: req.params.id as string },
-    include: {
-      formation: {
-        select: {
-          id: true, title: true,
-          instructors: { select: { id: true } },
-          enrollments: { select: { userId: true } },
-        },
-      },
-    },
+    include: { formation: { select: { id: true, title: true } } },
   });
   if (!session) return res.status(404).json({ error: 'Session introuvable' });
 
   const newStart = new Date(parsed.data.startAt);
-  const duration =
-    session.endAt.getTime() - session.startAt.getTime();
+  const duration = session.endAt.getTime() - session.startAt.getTime();
   const newEnd = new Date(newStart.getTime() + duration);
-  const oldStart = new Date(session.startAt);
-
-  // Rien à faire si la date ne bouge pas (même jour)
-  const sameDay =
-    oldStart.getFullYear() === newStart.getFullYear() &&
-    oldStart.getMonth() === newStart.getMonth() &&
-    oldStart.getDate() === newStart.getDate();
+  const before = {
+    title: session.title, startAt: new Date(session.startAt),
+    endAt: new Date(session.endAt), trainerId: session.trainerId,
+    formationId: session.formationId,
+  };
 
   const updated = await prisma.session.update({
     where: { id: session.id },
     data: { startAt: newStart, endAt: newEnd },
   });
 
-  let notified = 0;
-  if (!sameDay) {
-    const destinataires = new Map<string, 'APPRENANT' | 'EQUIPE'>();
-
-    // Apprenants inscrits à la formation
-    for (const e of session.formation.enrollments) {
-      if (e.userId !== req.user!.id) {
-        destinataires.set(e.userId, 'APPRENANT');
-      }
-    }
-    // Formateurs assignés à la formation + formateur de la session
-    for (const i of session.formation.instructors) {
-      if (i.id !== req.user!.id) destinataires.set(i.id, 'EQUIPE');
-    }
-    if (session.trainerId && session.trainerId !== req.user!.id) {
-      destinataires.set(session.trainerId, 'EQUIPE');
-    }
-
-    const quand = `${dateFR(newStart)} à ${heureFR(newStart)}`;
-    const avant = `${dateFR(oldStart)} à ${heureFR(oldStart)}`;
-
-    const data = [...destinataires.entries()].map(([userId, kind]) => ({
-      userId,
-      type: 'SESSION_RESCHEDULED',
-      title: `Session reportée : « ${session.title} »`,
-      body:
-        kind === 'APPRENANT'
-          ? `Vous étiez inscrit${''} le ${avant}. La session a lieu désormais le ${quand}.`
-          : `Session que vous encadrez : déplacée de ${avant} vers ${quand}.`,
-      link: kind === 'APPRENANT' ? '/mes-sessions' : '/backoffice/calendar',
-    }));
-    if (data.length > 0) {
-      await prisma.notification.createMany({ data });
-      notified = data.length;
-    }
-  }
+  const notified = await notifySessionMoved(
+    req.user!, before,
+    { startAt: new Date(updated.startAt), endAt: new Date(updated.endAt) }
+  );
 
   res.json({ session: updated, notified, newStartAt: updated.startAt });
 });
