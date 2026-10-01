@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import ThemeToggle from "@/components/ThemeToggle";
+import NotificationBell from "@/components/NotificationBell";
 import { useAuth } from "@/lib/auth";
 
 const PORTAL_NAV = [
@@ -70,6 +71,7 @@ export default function PortalHeader() {
           >
             {initials}
           </span>
+          <NotificationBell />
           <ThemeToggle />
           <button
             onClick={async () => {
