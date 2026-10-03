@@ -4,7 +4,7 @@ Plateforme de formation B2C : l'apprenant s'inscrit directement aux cours,
 l'équipe interne gère le catalogue et suit la progression. Cours riches
 (vidéo, images, quiz), sessions présentielles et portail apprenant immersif.
 
-**Stack** : Node.js 24 · Express 5 · TypeScript · Prisma · PostgreSQL · Next.js 16 · React 19 · Tailwind CSS 4
+**Stack** : Node.js 24 · Express 5 · TypeScript · Prisma · PostgreSQL ou MySQL · Next.js 16 · React 19 · Tailwind CSS 4
 
 ## Structure
 
@@ -39,6 +39,29 @@ npm run dev
 
 Variables d'environnement : voir `backend/.env` (`DATABASE_URL`, `JWT_SECRET`, `PORT`) et
 `frontend/.env.local` (`NEXT_PUBLIC_API_URL`).
+
+### Variante MySQL
+
+L'API passe par Prisma : elle fonctionne aussi bien sur PostgreSQL que MySQL. Sur une
+machine où seule MySQL (ou MariaDB ≥ 10.5) est disponible :
+
+```sql
+-- 1. Base et utilisateur (client mysql, en root)
+CREATE DATABASE liteudemy CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'liteudemy'@'localhost' IDENTIFIED BY 'motdepasse';
+GRANT ALL PRIVILEGES ON liteudemy.* TO 'liteudemy'@'localhost';
+```
+
+2. Dans `backend/prisma/schema.prisma`, remplacer `provider = "postgresql"` par
+   `provider = "mysql"` (Prisma ne lit pas le provider via une variable d'environnement :
+   ce réglage reste propre à chaque machine).
+3. Dans `backend/.env`, pointer `DATABASE_URL` sur MySQL (modèle : `backend/.env.mysql.example`).
+4. Créer les tables et les données de démo — le dossier `prisma/migrations` du dépôt est au
+   format PostgreSQL, on synchronise donc directement le schéma :
+   ```bash
+   npx prisma db push       # crée les tables depuis schema.prisma
+   npx tsx prisma/seed.ts   # données de démonstration
+   ```
 
 ## Rôles
 

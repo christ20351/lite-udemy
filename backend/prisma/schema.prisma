@@ -61,12 +61,12 @@ model Formation {
   id           String          @id @default(cuid())
   title        String
   slug         String          @unique
-  description  String?
+  description  String?         @db.Text
   category     String?
   mode         FormationMode   @default(ONLINE)
   status       FormationStatus @default(DRAFT)
   thumbnailUrl String?
-  /// null = gratuite · sinon prix indicatif en € (pas de paiement en ligne en v1)
+  /// null = gratuite · sinon prix indicatif en FCFA (pas de paiement en ligne en v1)
   price        Float?
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
@@ -95,7 +95,7 @@ model Lesson {
   sectionId String
   section   Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   title     String
-  content   String?
+  content   String?  @db.Text
   videoPath String?
   /// Contenu structuré : [{type:"text"|"image"|"code"|"callout", text, url?, caption?}]
   blocks    Json?
@@ -187,7 +187,7 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      String // ex : FORMATION_ASSIGNED
   title     String
-  body      String?
+  body      String? @db.Text
   /// Chemin frontend vers la ressource concernée
   link      String?
   read      Boolean  @default(false)
@@ -211,7 +211,7 @@ model QuizQuestion {
   id      String @id @default(cuid())
   quizId  String
   quiz    Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
-  text    String
+  text    String @db.Text
   choices Json   // [{text: string, correct: boolean}]
   order   Int    @default(0)
 

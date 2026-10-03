@@ -169,7 +169,7 @@ async function main() {
     category: 'Data',
     mode: 'HYBRID',
     status: 'PUBLISHED',
-    price: 1490,
+    price: 14900,
     instructorId: karim.id,
   });
 
@@ -349,7 +349,7 @@ async function main() {
     category: 'Développement web',
     mode: 'ONLINE',
     status: 'PUBLISHED',
-    price: 1290,
+    price: 12900,
     instructorId: emilie.id,
   });
 
@@ -605,7 +605,7 @@ async function main() {
     category: 'Soft skills',
     mode: 'ONLINE',
     status: 'PUBLISHED',
-    price: 890,
+    price: 8900,
     instructorId: thomas.id,
   });
 
@@ -679,7 +679,7 @@ async function main() {
     category: 'Sécurité',
     mode: 'ONLINE',
     status: 'DRAFT',
-    price: 690,
+    price: 6900,
     instructorId: karim.id,
   });
 
